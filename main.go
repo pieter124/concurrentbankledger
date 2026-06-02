@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"sync"
 	"time"
 )
 
@@ -22,8 +22,9 @@ type LocalAccountTransaction struct {
 
 // Account struct represents any financial entity allowed to perform financial transactions.
 type Account struct {
-	Username string                    `json:"username"` // Unique identifier of account.
-	History  []LocalAccountTransaction `json:"history"`  // A list of transactions local to the account.
+	sync.Mutex                           // Anonymous approach (allows you to use explicit function calls).
+	Username   string                    `json:"username"` // Unique identifier of account.
+	History    []LocalAccountTransaction `json:"history"`  // A list of transactions local to the account.
 }
 
 // Ledger struct represents the supported accounts and the global history of financial transactions.
@@ -32,6 +33,51 @@ type Ledger struct {
 	LedgerHistory []Transaction       `json:"ledgerhistory"`
 }
 
+func (account *Account) GetBalance() int64 {
+	var balance int64
+	for i := range account.History {
+		transaction := account.History[i]
+		amount := transaction.Amount
+		balance += amount
+	}
+	return balance
+}
+
+func (ledger *Ledger) Transfer(source string, target string, amount int64) bool {
+	// Sanitize existence of accounts.
+	sourceAccount, exists := ledger.Account[source]
+	if !exists {
+		return false
+	}
+	targetAccount, exists := ledger.Account[target]
+	if !exists {
+		return false
+	}
+
+	// Lock both accounts...
+	// Do the transfer...
+	var first, second *Account
+	if source < target {
+		first = sourceAccount
+		second = targetAccount
+	} else {
+		first = targetAccount
+		second = sourceAccount
+	}
+	first.Lock()
+	defer first.Unlock()
+	second.Lock()
+	defer second.Unlock()
+
+	// Sanitize if the source account has enough money...
+	if sourceBalance := sourceAccount.GetBalance(); sourceBalance < amount {
+		return false
+	}
+
+	// Create transaction object...
+
+	return true
+}
+
 func main() {
-	fmt.Println("Thought Machine Ledger Project: Initialized.")
 }
