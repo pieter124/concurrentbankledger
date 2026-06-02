@@ -27,9 +27,18 @@ type Account struct {
 	History    []LocalAccountTransaction `json:"history"`  // A list of transactions local to the account.
 }
 
+// IdempotencyRecord struct helps to ensure transactions are not repeated and only done once.
+type IdempotencyRecord struct {
+	ID string `json:"id"`
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Amount int64 `json:"amount"`
+}
+
 // Ledger struct represents the supported accounts and the global history of financial transactions.
 type Ledger struct {
-	sync.Mutex                        // Anonymous approach (allows you to use explicit function calls).
-	Account       map[string]*Account `json:"accounts"`
-	LedgerHistory []Transaction       `json:"ledgerhistory"`
+	sync.Mutex                                          // Anonymous approach (allows you to use explicit function calls).
+	Account               map[string]*Account           `json:"accounts"`
+	AttemptedTransactions map[string]*IdempotencyRecord `json:"attemptedtransactions"`
+	LedgerHistory         []Transaction                 `json:"ledgerhistory"`
 }

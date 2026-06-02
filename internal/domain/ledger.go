@@ -18,7 +18,7 @@ func (account *Account) GetBalance() int64 {
 }
 
 // Transfer - Thread-safe transferring of finances from one account to another.
-func (ledger *Ledger) Transfer(source string, target string, amount int64) bool {
+func (ledger *Ledger) Transfer(source string, target string, amount int64, idempotencyKey string) (bool, error) {
 	// Quick sanitation check of valid amount.
 	if amount <= 0 {
 		return false
@@ -36,6 +36,11 @@ func (ledger *Ledger) Transfer(source string, target string, amount int64) bool 
 	if !exists {
 		return false
 	}
+
+	// Idempotency check...
+	ledger.Lock()
+	
+	ledger.Unlock()
 
 	// Lock both accounts in an enforced order.
 	// Then create and record the transactions.
@@ -83,7 +88,7 @@ func (ledger *Ledger) Transfer(source string, target string, amount int64) bool 
 	sourceAccount.History = append(sourceAccount.History, sourceTransaction)
 	targetAccount.History = append(targetAccount.History, targetTransaction)
 
-	return true
+	return true, nil
 }
 
 // InitialiseAccount - Initialising new accounts by using "The Mint" to model the starting balance of the new account as one big transaction.
