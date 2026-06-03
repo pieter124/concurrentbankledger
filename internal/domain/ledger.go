@@ -46,7 +46,7 @@ func (ledger *Ledger) Transfer(source string, target string, amount int64, idemp
 		// Handle mismatch payload...
 		if record.Source != source || record.Target != target || record.Amount != amount {
 			ledger.Unlock()
-			return false, fmt.Errorf("Payload mismatch for idempotency key %s", idempotencyKey)
+			return false, fmt.Errorf("payload mismatch for idempotency key %s", idempotencyKey)
 		}
 
 		// Handle an identical match...
@@ -56,7 +56,7 @@ func (ledger *Ledger) Transfer(source string, target string, amount int64, idemp
 			return true, nil
 		case StatusPending:
 			ledger.Unlock()
-			return false, fmt.Errorf("Transaction for key %s is already being processed", idempotencyKey)
+			return false, fmt.Errorf("transaction for key %s is already being processed", idempotencyKey)
 		default:
 			ledger.Unlock()
 			return false, nil
@@ -96,7 +96,7 @@ func (ledger *Ledger) Transfer(source string, target string, amount int64, idemp
 			record.Status = StatusFailedFunds
 		}
 		ledger.Unlock()
-		return false, fmt.Errorf("Insufficient funds on key %s", idempotencyKey)
+		return false, fmt.Errorf("insufficient funds on key %s", idempotencyKey)
 	}
 
 	// Create transaction objects...
@@ -147,8 +147,8 @@ func (ledger *Ledger) InitialiseAccount(username string, startingBalance int64) 
 }
 
 // InitialiseLedger - Initializing a ledger, creating a "system mint", which essentially has infinite monies.
-func InitialiseLedger() (ledger Ledger) {
-	ledger = Ledger{
+func InitialiseLedger() (ledger *Ledger) {
+	ledger = &Ledger{
 		Account:               make(map[string]*Account),
 		LedgerHistory:         make([]Transaction, 0, 100),
 		AttemptedTransactions: make(map[string]*IdempotencyRecord),

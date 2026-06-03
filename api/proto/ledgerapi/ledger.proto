@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+// Tells the compiler the Go package path for the generated code.
+option go_package = "concurrent-bank-ledger/api/proto/ledgerapi";
+
+package ledgerapi;
+
+// Define the LedgerService and its network operations.
+service LedgerService {
+  // Transfer designs the RPC method that our clients will call over the wire...
+  rpc Transfer (TransferRequest) returns (TransferResponse);
+}
+
+// The exact data structure the client MUST send over the network.
+message TransferRequest {
+  string source = 1;
+  string target = 2;
+  int64 amount = 3;
+  string idempotency_key = 4; // Idempotency client-side token!
+}
+
+// The exact data structure our gRPC server will return to the client.
+message TransferResponse {
+  bool success = 1;
+  string message = 2; // Helpful text detailing a success or reason for failure.
+}
