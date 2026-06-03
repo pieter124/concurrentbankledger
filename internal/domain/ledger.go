@@ -2,7 +2,9 @@
 package domain
 
 import (
+	"fmt"
 	"time"
+
 	"github.com/google/uuid"
 )
 
@@ -21,25 +23,55 @@ func (account *Account) GetBalance() int64 {
 func (ledger *Ledger) Transfer(source string, target string, amount int64, idempotencyKey string) (bool, error) {
 	// Quick sanitation check of valid amount.
 	if amount <= 0 {
-		return false
+		return false, nil
 	}
 
 	// Sanitize existence of accounts.
 	if source == target {
-		return false
+		return false, nil
 	}
 	sourceAccount, exists := ledger.Account[source]
 	if !exists {
-		return false
+		return false, nil
 	}
 	targetAccount, exists := ledger.Account[target]
 	if !exists {
-		return false
+		return false, nil
 	}
 
 	// Idempotency check...
 	ledger.Lock()
-	
+	record, exists := ledger.AttemptedTransactions[idempotencyKey]
+	if exists {
+		// Handle mismatch payload...
+		if record.Source != source || record.Target != target || record.Amount != amount {
+			ledger.Unlock()
+			return false, fmt.Errorf("Payload mismatch for idempotency key %s", idempotencyKey)
+		}
+
+		// Handle an identical match...
+		switch record.Status {
+		case StatusSuccess:
+			ledger.Unlock()
+			return true, nil
+		case StatusPending:
+			ledger.Unlock()
+			return false, fmt.Errorf("Transaction for key %s is already being processed", idempotencyKey)
+		default:
+			ledger.Unlock()
+			return false, nil
+		}
+
+	}
+
+	// Construct idempotency record...
+	ledger.AttemptedTransactions[idempotencyKey] = &IdempotencyRecord{
+		ID:     idempotencyKey,
+		Source: source,
+		Target: target,
+		Amount: amount,
+		Status: StatusPending,
+	}
 	ledger.Unlock()
 
 	// Lock both accounts in an enforced order.
@@ -59,7 +91,12 @@ func (ledger *Ledger) Transfer(source string, target string, amount int64, idemp
 
 	// Sanitize if the source account has enough money...
 	if sourceBalance := sourceAccount.GetBalance(); sourceBalance < amount {
-		return false
+		ledger.Lock()
+		if record, exists := ledger.AttemptedTransactions[idempotencyKey]; exists {
+			record.Status = StatusFailedFunds
+		}
+		ledger.Unlock()
+		return false, fmt.Errorf("Insufficient funds on key %s", idempotencyKey)
 	}
 
 	// Create transaction objects...
@@ -83,6 +120,9 @@ func (ledger *Ledger) Transfer(source string, target string, amount int64, idemp
 	// Lock ledger...
 	ledger.Lock()
 	ledger.LedgerHistory = append(ledger.LedgerHistory, globalTransaction)
+	if record, exists := ledger.AttemptedTransactions[idempotencyKey]; exists {
+		record.Status = StatusSuccess
+	}
 	ledger.Unlock()
 
 	sourceAccount.History = append(sourceAccount.History, sourceTransaction)
@@ -100,14 +140,18 @@ func (ledger *Ledger) InitialiseAccount(username string, startingBalance int64) 
 	ledger.Lock()
 	ledger.Account[username] = &newAccount
 	ledger.Unlock()
-	ledger.Transfer("The Mint", username, startingBalance)
+
+	// Generate a unique idempotency key for this account's genesis transaction.
+	genesisKey := "genesis-funding-" + username
+	_, _ = ledger.Transfer("The Mint", username, startingBalance, genesisKey)
 }
 
 // InitialiseLedger - Initializing a ledger, creating a "system mint", which essentially has infinite monies.
 func InitialiseLedger() (ledger Ledger) {
 	ledger = Ledger{
-		Account:       make(map[string]*Account),
-		LedgerHistory: make([]Transaction, 0, 100),
+		Account:               make(map[string]*Account),
+		LedgerHistory:         make([]Transaction, 0, 100),
+		AttemptedTransactions: make(map[string]*IdempotencyRecord),
 	}
 	ledger.Account["The Mint"] = &Account{
 		Username: "The Mint",

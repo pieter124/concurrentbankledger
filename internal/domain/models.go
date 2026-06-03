@@ -5,6 +5,13 @@ import (
 	"time"
 )
 
+// An enum to help define the different types of states for our idempotency check.
+const (
+	StatusPending = iota
+	StatusSuccess
+	StatusFailedFunds
+)
+
 // Transaction struct represents the financial transaction that obeys our zero-sum rule.
 type Transaction struct {
 	ID        string    `json:"id"`        // Unique identifier of transaction.
@@ -33,6 +40,7 @@ type IdempotencyRecord struct {
 	Source string `json:"source"`
 	Target string `json:"target"`
 	Amount int64 `json:"amount"`
+	Status int `json:"status"`
 }
 
 // Ledger struct represents the supported accounts and the global history of financial transactions.
