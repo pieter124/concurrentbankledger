@@ -38,7 +38,7 @@ func (s *Server) Transfer(ctx context.Context, req *pb.TransferRequest) (*pb.Tra
 	if !success {
 		return &pb.TransferResponse{
 			Success: false,
-			Message: "Transfer rejected by ledger...",
+			Message: fmt.Sprintf("Transfer rejected by ledger... %s %s %d", source, target, key),
 		}, nil
 	}
 	

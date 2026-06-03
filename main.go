@@ -9,8 +9,8 @@ import (
 
 func main() {
 	ledger := domain.InitialiseLedger()
-	ledger.InitialiseAccount("alice", 10000)
-	ledger.InitialiseAccount("bob", 5000)
+	ledger.InitialiseAccount("wendy", 5000)
+	ledger.InitialiseAccount("pieter", 5)
 	
 	serverPort := ":8080"
 	err := grpc.StartGRPCServer(serverPort, ledger)
