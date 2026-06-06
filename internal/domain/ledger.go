@@ -132,7 +132,16 @@ func (ledger *Ledger) Transfer(source string, target string, amount int64, idemp
 }
 
 // InitialiseAccount - Initialising new accounts by using "The Mint" to model the starting balance of the new account as one big transaction.
-func (ledger *Ledger) InitialiseAccount(username string, startingBalance int64) {
+func (ledger *Ledger) InitialiseAccount(username string, startingBalance int64) error {
+	// Sanity check
+	if _, exists := ledger.Account[username]; exists {
+		return fmt.Errorf("account already exists with username %s", username)
+	}
+
+	if startingBalance == 0 {
+		return fmt.Errorf("balance > 0 is required")
+	}
+
 	newAccount := Account{
 		Username: username,
 		History:  make([]LocalAccountTransaction, 0, 10),
@@ -143,7 +152,11 @@ func (ledger *Ledger) InitialiseAccount(username string, startingBalance int64) 
 
 	// Generate a unique idempotency key for this account's genesis transaction.
 	genesisKey := "genesis-funding-" + username
-	_, _ = ledger.Transfer("The Mint", username, startingBalance, genesisKey)
+	_, err := ledger.Transfer("The Mint", username, startingBalance, genesisKey)
+	if err != nil {
+		return fmt.Errorf("could not initialise account")
+	}
+	return nil
 }
 
 // InitialiseLedger - Initializing a ledger, creating a "system mint", which essentially has infinite monies.

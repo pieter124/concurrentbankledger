@@ -9,11 +9,11 @@ import (
 func TestConcurrentLedgerInvariance(t *testing.T) {
 	// Initialise ledger and create accounts...
 	ledger := InitialiseLedger()
-	ledger.InitialiseAccount("alice", 10_000)
-	ledger.InitialiseAccount("bob", 10_000)
+	_ = ledger.InitialiseAccount("alice", 10_000)
+	_ = ledger.InitialiseAccount("bob", 10_000)
 
 	// Calculate initial total monies...
-	initialMonies := ledger.Account["The Mint"].GetBalance() + 
+	initialMonies := ledger.Account["The Mint"].GetBalance() +
 		ledger.Account["alice"].GetBalance() +
 		ledger.Account["bob"].GetBalance()
 
@@ -21,7 +21,7 @@ func TestConcurrentLedgerInvariance(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range 100 {
 		wg.Add(2)
-		
+
 		// Worker 1 moves money from alice to bob.
 		go func(id int) {
 			defer wg.Done()
@@ -52,9 +52,9 @@ func TestConcurrentLedgerInvariance(t *testing.T) {
 func TestTransferInsufficientFunds(t *testing.T) {
 	// Initialise ledger and accounts...
 	ledger := InitialiseLedger()
-	ledger.InitialiseAccount("alice", 1000)
-	ledger.InitialiseAccount("bob", 500)
-	
+	_ = ledger.InitialiseAccount("alice", 1000)
+	_ = ledger.InitialiseAccount("bob", 500)
+
 	// Alice tries to send more than she has.
 	success, _ := ledger.Transfer("alice", "bob", 2000, "tx_aliceToBob")
 
@@ -72,8 +72,8 @@ func TestTransferInsufficientFunds(t *testing.T) {
 func TestTransferToNonExistentAccount(t *testing.T) {
 	// Initialise ledger and account.
 	ledger := InitialiseLedger()
-	ledger.InitialiseAccount("alice", 1000)
-	
+	_ = ledger.InitialiseAccount("alice", 1000)
+
 	// Attempt transfer to non-existent account.
 	success, _ := ledger.Transfer("alice", "charlie", 500, "tx_aliceToCharlie")
 
@@ -87,8 +87,8 @@ func TestTransferToNonExistentAccount(t *testing.T) {
 
 func TestTransferInvalidAmount(t *testing.T) {
 	ledger := InitialiseLedger()
-	ledger.InitialiseAccount("alice", 1000)
-	ledger.InitialiseAccount("bob", 1000)
+	_ = ledger.InitialiseAccount("alice", 1000)
+	_ = ledger.InitialiseAccount("bob", 1000)
 
 	// Attempt negative transfer.
 	if success, _ := ledger.Transfer("alice", "bob", -500, "tx_aliceToBob1"); success {
@@ -104,8 +104,8 @@ func TestTransferInvalidAmount(t *testing.T) {
 
 func TestTransferIdempotencyAndHijackProtection(t *testing.T) {
 	ledger := InitialiseLedger()
-	ledger.InitialiseAccount("alice", 1000)
-	ledger.InitialiseAccount("bob", 500)
+	_ = ledger.InitialiseAccount("alice", 1000)
+	_ = ledger.InitialiseAccount("bob", 500)
 
 	sharedKey := "tx_idempotency_test_key"
 
@@ -125,7 +125,7 @@ func TestTransferIdempotencyAndHijackProtection(t *testing.T) {
 	success2, err2 := ledger.Transfer("alice", "bob", 200, sharedKey)
 	if !success2 || err2 != nil {
 		t.Fatalf("Idempotent retry failed to process silently: %v", err2)
-	} 
+	}
 
 	// Verify the balance did NOT drot...
 	if bal := ledger.Account["alice"].GetBalance(); bal != 800 {

@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	LedgerService_Transfer_FullMethodName = "/ledgerapi.LedgerService/Transfer"
+	LedgerService_Transfer_FullMethodName          = "/ledgerapi.LedgerService/Transfer"
+	LedgerService_InitialiseAccount_FullMethodName = "/ledgerapi.LedgerService/InitialiseAccount"
 )
 
 // LedgerServiceClient is the client API for LedgerService service.
@@ -28,8 +29,10 @@ const (
 //
 // Define the LedgerService and its network operations.
 type LedgerServiceClient interface {
-	// Transfer desgines the RPC method that our clients will call over the wire...
+	// Transfer designs the RPC method that our clients will call over the wire...
 	Transfer(ctx context.Context, in *TransferRequest, opts ...grpc.CallOption) (*TransferResponse, error)
+	// Creating an interface for adding accounts....
+	InitialiseAccount(ctx context.Context, in *InitialiseAccountRequest, opts ...grpc.CallOption) (*InitialiseAccountResponse, error)
 }
 
 type ledgerServiceClient struct {
@@ -50,14 +53,26 @@ func (c *ledgerServiceClient) Transfer(ctx context.Context, in *TransferRequest,
 	return out, nil
 }
 
+func (c *ledgerServiceClient) InitialiseAccount(ctx context.Context, in *InitialiseAccountRequest, opts ...grpc.CallOption) (*InitialiseAccountResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InitialiseAccountResponse)
+	err := c.cc.Invoke(ctx, LedgerService_InitialiseAccount_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LedgerServiceServer is the server API for LedgerService service.
 // All implementations must embed UnimplementedLedgerServiceServer
 // for forward compatibility.
 //
 // Define the LedgerService and its network operations.
 type LedgerServiceServer interface {
-	// Transfer desgines the RPC method that our clients will call over the wire...
+	// Transfer designs the RPC method that our clients will call over the wire...
 	Transfer(context.Context, *TransferRequest) (*TransferResponse, error)
+	// Creating an interface for adding accounts....
+	InitialiseAccount(context.Context, *InitialiseAccountRequest) (*InitialiseAccountResponse, error)
 	mustEmbedUnimplementedLedgerServiceServer()
 }
 
@@ -70,6 +85,9 @@ type UnimplementedLedgerServiceServer struct{}
 
 func (UnimplementedLedgerServiceServer) Transfer(context.Context, *TransferRequest) (*TransferResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Transfer not implemented")
+}
+func (UnimplementedLedgerServiceServer) InitialiseAccount(context.Context, *InitialiseAccountRequest) (*InitialiseAccountResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InitialiseAccount not implemented")
 }
 func (UnimplementedLedgerServiceServer) mustEmbedUnimplementedLedgerServiceServer() {}
 func (UnimplementedLedgerServiceServer) testEmbeddedByValue()                       {}
@@ -110,6 +128,24 @@ func _LedgerService_Transfer_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LedgerService_InitialiseAccount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InitialiseAccountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LedgerServiceServer).InitialiseAccount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LedgerService_InitialiseAccount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LedgerServiceServer).InitialiseAccount(ctx, req.(*InitialiseAccountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // LedgerService_ServiceDesc is the grpc.ServiceDesc for LedgerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -120,6 +156,10 @@ var LedgerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Transfer",
 			Handler:    _LedgerService_Transfer_Handler,
+		},
+		{
+			MethodName: "InitialiseAccount",
+			Handler:    _LedgerService_InitialiseAccount_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

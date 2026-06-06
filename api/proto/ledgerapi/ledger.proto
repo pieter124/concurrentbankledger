@@ -9,6 +9,9 @@ package ledgerapi;
 service LedgerService {
   // Transfer designs the RPC method that our clients will call over the wire...
   rpc Transfer (TransferRequest) returns (TransferResponse);
+
+  // Creating an interface for adding accounts....
+  rpc InitialiseAccount (InitialiseAccountRequest) returns (InitialiseAccountResponse);
 }
 
 // The exact data structure the client MUST send over the network.
@@ -23,4 +26,16 @@ message TransferRequest {
 message TransferResponse {
   bool success = 1;
   string message = 2; // Helpful text detailing a success or reason for failure.
+}
+
+// Exact data structure for adding accounts...
+message InitialiseAccountRequest {
+  string username = 1;
+  int64 balance = 2;
+}
+
+// Exact data structure our gRPC server will return to the client for creating accounts...
+message InitialiseAccountResponse {
+  bool success = 1;
+  string message = 2;
 }

@@ -6,7 +6,7 @@ Originally built as an isolated simulation, the system has been evolved into a *
 
 ---
 
-## 🚀 Key Architectural Features
+## Key Architectural Features
 
 * **Double-Entry Tracking (Zero-Sum):** Capital is never simply incremented or decremented in isolation. Every transfer generates a global ledger log alongside symmetrical local transaction balances (debits and credits).
 * **Enforced Lock Ordering (Deadlock Prevention):** Implements fine-grained locking on individual account resources. To safely allow bidirectional high-velocity transfers (e.g., Alice → Bob and Bob → Alice simultaneously), the engine compares account keys lexicographically to guarantee an unchanging, deterministic locking order.
@@ -33,32 +33,9 @@ Models (internal/domain): Contains the Transaction master records (storing amoun
 Network Protocol (api/proto): The definitive service contract file (ledger.proto) used to generate optimized Go wire-parsing structs.
 
 gRPC Adapter (internal/ports/grpc): Custom handwriting wrapper embedding UnimplementedLedgerServiceServer to satisfy strict interface composition rules while safely guaranteeing forward-compatibility.
+```
 
-⚡ The API Contract (ledger.proto)
-The entire system communication is bound to a strict, compile-time contract:
-
-Protocol Buffers
-syntax = "proto3";
-
-package ledgerapi;
-option go_package = "concurrent-bank-ledger/api/proto/ledgerapi";
-
-service LedgerService {
-  rpc Transfer (TransferRequest) returns (TransferResponse);
-}
-
-message TransferRequest {
-  string source = 1;
-  string target = 2;
-  int64 amount = 3;
-  string idempotency_key = 4;
-}
-
-message TransferResponse {
-  bool success = 1;
-  string message = 2;
-}
-💻 Getting Started & Running the Server
+Getting Started & Running the Server
 Prerequisites
 Go 1.22+
 

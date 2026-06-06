@@ -7,7 +7,7 @@ import (
 	"net"
 
 	"concurrent-bank-ledger/internal/domain"
-	
+
 	// Import the gRPC code that protoc just generated for you...
 	pb "concurrent-bank-ledger/api/proto/ledgerapi"
 
@@ -38,13 +38,31 @@ func (s *Server) Transfer(ctx context.Context, req *pb.TransferRequest) (*pb.Tra
 	if !success {
 		return &pb.TransferResponse{
 			Success: false,
-			Message: fmt.Sprintf("Transfer rejected by ledger... %s %s %d", source, target, key),
+			Message: fmt.Sprintf("Transfer rejected by ledger... %s %s %s", source, target, key),
 		}, nil
 	}
-	
+
 	return &pb.TransferResponse{
 		Success: true,
 		Message: fmt.Sprintf("Successfully transferred %d from %s to %s!", amount, source, target),
+	}, nil
+}
+
+func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccountRequest) (*pb.InitialiseAccountResponse, error) {
+	// 1. Extract values directly from the request object...
+	username, balance := req.GetUsername(), req.GetBalance()
+
+	err := s.Ledger.InitialiseAccount(username, balance)
+	if err != nil {
+		return &pb.InitialiseAccountResponse{
+			Success: false,
+			Message: err.Error(),
+		}, nil
+	}
+
+	return &pb.InitialiseAccountResponse{
+		Success: true,
+		Message: fmt.Sprintf("Successfully initialised account %s with %d starting balance!", username, balance),
 	}, nil
 }
 
@@ -58,7 +76,7 @@ func StartGRPCServer(port string, domainLedger *domain.Ledger) error {
 
 	// Create a new & empty gRPC server instance...
 	gRPCServer := grpc.NewServer()
-	
+
 	// Instantiate our custom Server struct with the domain ledger...
 	srv := &Server{
 		Ledger: domainLedger,
@@ -67,6 +85,6 @@ func StartGRPCServer(port string, domainLedger *domain.Ledger) error {
 	// Register our implementation with the gRPC server router...
 	pb.RegisterLedgerServiceServer(gRPCServer, srv)
 	fmt.Printf("gRPC Banking Ledger Server is running securely on port %s...\n", port)
-	
+
 	return gRPCServer.Serve(listener)
 }
