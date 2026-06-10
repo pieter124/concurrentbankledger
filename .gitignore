@@ -1,3 +1,5 @@
 # Ignore binary executable.
 bankserver
+mutex_results.txt
+mutex_actor_results.txt
 

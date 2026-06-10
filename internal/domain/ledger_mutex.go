@@ -1,4 +1,3 @@
-// Package domain contains the internal logic of our ledger and entities.
 package domain
 
 import (
@@ -7,17 +6,6 @@ import (
 
 	"github.com/google/uuid"
 )
-
-// GetBalance - Simple function to sum up the transactions of an account, to get the current balance.
-func (account *Account) GetBalance() int64 {
-	var balance int64
-	for i := range account.History {
-		transaction := account.History[i]
-		amount := transaction.Amount
-		balance += amount
-	}
-	return balance
-}
 
 // Transfer - Thread-safe transferring of finances from one account to another.
 func (ledger *Ledger) Transfer(source string, target string, amount int64, idempotencyKey string) (bool, error) {
@@ -39,7 +27,7 @@ func (ledger *Ledger) Transfer(source string, target string, amount int64, idemp
 		return false, nil
 	}
 
-	// Idempotency check...
+	// Idempotency check... LEDGER LOCK REQURED
 	ledger.Lock()
 	record, exists := ledger.AttemptedTransactions[idempotencyKey]
 	if exists {
@@ -75,7 +63,7 @@ func (ledger *Ledger) Transfer(source string, target string, amount int64, idemp
 	ledger.Unlock()
 
 	// Lock both accounts in an enforced order.
-	// Then create and record the transactions.
+	// Then create and record the transactions. ACCOUNT LOCKED
 	var first, second *Account
 	if source < target {
 		first = sourceAccount
@@ -89,7 +77,7 @@ func (ledger *Ledger) Transfer(source string, target string, amount int64, idemp
 	second.Lock()
 	defer second.Unlock()
 
-	// Sanitize if the source account has enough money...
+	// Sanitize if the source account has enough money... LCOK REQURED
 	if sourceBalance := sourceAccount.GetBalance(); sourceBalance < amount {
 		ledger.Lock()
 		if record, exists := ledger.AttemptedTransactions[idempotencyKey]; exists {
@@ -146,7 +134,7 @@ func (ledger *Ledger) InitialiseAccount(username string, startingBalance int64) 
 		Username: username,
 		History:  make([]LocalAccountTransaction, 0, 10),
 	}
-	ledger.Lock()
+	ledger.Lock() // LOCK REQUIRED
 	ledger.Account[username] = &newAccount
 	ledger.Unlock()
 
@@ -159,20 +147,3 @@ func (ledger *Ledger) InitialiseAccount(username string, startingBalance int64) 
 	return nil
 }
 
-// InitialiseLedger - Initializing a ledger, creating a "system mint", which essentially has infinite monies.
-func InitialiseLedger() (ledger *Ledger) {
-	ledger = &Ledger{
-		Account:               make(map[string]*Account),
-		LedgerHistory:         make([]Transaction, 0, 100),
-		AttemptedTransactions: make(map[string]*IdempotencyRecord),
-	}
-	ledger.Account["The Mint"] = &Account{
-		Username: "The Mint",
-		History:  make([]LocalAccountTransaction, 0, 10),
-	}
-	ledger.Account["The Mint"].History = append(ledger.Account["The Mint"].History, LocalAccountTransaction{
-		TransactionID: "THEMINT",
-		Amount:        999_999_999_999,
-	})
-	return
-}
