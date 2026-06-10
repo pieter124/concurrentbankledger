@@ -1,9 +1,9 @@
-
 // Package domain contains the internal logic of our ledger and entities.
 package domain
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,7 +37,7 @@ func (ledger *Ledger) executePureTransfer(source string, target string, amount i
 		if record.Source != source || record.Target != target || record.Amount != amount {
 			return false, fmt.Errorf("payload mismatch for idempotency key %s", idempotencyKey)
 		}
-		
+
 		// Handle identical match...
 		switch record.Status {
 		case StatusSuccess:
@@ -92,7 +92,7 @@ func (ledger *Ledger) executePureTransfer(source string, target string, amount i
 
 	sourceAccount.History = append(sourceAccount.History, sourceTransaction)
 	targetAccount.History = append(targetAccount.History, targetTransaction)
-	
+
 	return true, nil
 }
 
@@ -110,9 +110,9 @@ func (ledger *Ledger) executePureInitialise(username string, startingBalance int
 	// Build entity struct...
 	newAccount := Account{
 		Username: username,
-		History: make([]LocalAccountTransaction, 0, 10),
+		History:  make([]LocalAccountTransaction, 0, 10),
 	}
-	
+
 	// Insert directly into the map without ledger.Lock()
 	ledger.Account[username] = &newAccount
 
@@ -129,11 +129,18 @@ func (ledger *Ledger) executePureInitialise(username string, startingBalance int
 
 // StartActorLoop boots up the single-threaded engine processor.
 // It continuously reads commands from the queue and executes them lock-free.
-func (ledger *Ledger) StartActorLoop(queue chan LedgerCommand) {
+func (ledger *Ledger) StartActorLoop(queue chan LedgerCommand, wg *sync.WaitGroup) {
+	wg.Add(1)
+
 	go func() {
+		defer wg.Done()
+
+		// 1. Add this print statement so you know the engine is alive
+		fmt.Println("[Actor] Background engine loop initialized safely.")
+
 		for cmd := range queue {
 			switch cmd.Type {
-			
+
 			case "TRANSFER":
 				req := cmd.Transfer
 				// Run the pure sequential math safely on 1 core
@@ -149,5 +156,8 @@ func (ledger *Ledger) StartActorLoop(queue chan LedgerCommand) {
 				req.ReplyTo <- err
 			}
 		}
+		// 2. Add this print statement right here!
+		// It only executes AFTER the queue is closed AND completely empty.
+		fmt.Println("[Actor] Mailbox closed and drained. Background loop exiting cleanly.")
 	}()
 }

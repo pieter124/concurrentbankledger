@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"math/rand"
+	"sync"
 	"sync/atomic"
 	"testing"
 )
@@ -90,8 +91,10 @@ func BenchmarkActorTransfers_LowContention(b *testing.B) {
 	ledger := InitialiseLedger()
 	queue := make(chan LedgerCommand, 10000) // large buffer to prevent stalling...
 	
+	var wg sync.WaitGroup
+
 	// Start the single background worker thread...
-	ledger.StartActorLoop(queue)
+	ledger.StartActorLoop(queue, &wg)
 	
 	// Generate 2,000 unique accounts...
 	accountCount := 2000
@@ -139,13 +142,17 @@ func BenchmarkActorTransfers_LowContention(b *testing.B) {
 	})
 
 	close(queue) // Clean up channel when done...
+	
+	wg.Wait()
 }
 
 // BenchmarkActorTransfers_HighContention simulates thousands of concurrent threads
 func BenchmarkActorTransfers_HighContention(b *testing.B) {
 	ledger := InitialiseLedger()
 	queue := make(chan LedgerCommand, 10000)
-	ledger.StartActorLoop(queue)
+	var wg sync.WaitGroup
+
+	ledger.StartActorLoop(queue, &wg)
 
 	accountCount := 1000
 	for i := 0; i < accountCount; i++ {
@@ -182,4 +189,6 @@ func BenchmarkActorTransfers_HighContention(b *testing.B) {
 	})
 
 	close(queue)
+
+	wg.Wait()
 }
