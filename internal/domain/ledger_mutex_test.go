@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"sync/atomic"
 )
 
 func TestConcurrentLedgerInvariance(t *testing.T) {
@@ -19,6 +20,7 @@ func TestConcurrentLedgerInvariance(t *testing.T) {
 
 	// Execute concurrent financial transactions...
 	var wg sync.WaitGroup
+	var txCounter uint64
 	for i := range 100 {
 		wg.Add(2)
 
@@ -26,17 +28,27 @@ func TestConcurrentLedgerInvariance(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			key := fmt.Sprintf("tx_aliceToBob%d", id)
-			_, _ = ledger.Transfer("alice", "bob", 50, key)
+			ok, _ := ledger.Transfer("alice", "bob", 50, key)
+			if ok {
+				atomic.AddUint64(&txCounter, 1)
+			}
 		}(i)
 
 		// Worker 2 moves money from bob to alice.
 		go func(id int) {
 			defer wg.Done()
 			key := fmt.Sprintf("tx_bobToAlice%d", id)
-			_, _ = ledger.Transfer("bob", "alice", 50, key)
+			ok, _ := ledger.Transfer("bob", "alice", 50, key)
+			if ok {
+				atomic.AddUint64(&txCounter, 1)
+			}
 		}(i)
 	}
 	wg.Wait()
+
+	if txCounter != 200 {
+		t.Fatalf("expected 200 transfers, got %d", txCounter)
+	}
 
 	// Calculate final total monies...
 	finalMonies := ledger.Account["The Mint"].GetBalance() +

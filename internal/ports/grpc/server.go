@@ -36,7 +36,7 @@ func (s *Server) Transfer(ctx context.Context, req *pb.TransferRequest) (*pb.Tra
 	
 	// 3. Slip queue inside a generic LedgerCommand and drop it down the channel.
 	s.Queue <- domain.LedgerCommand{
-		Type: "TRANSFER",
+		Type: domain.TransferCommand,
 		Transfer: transferReq,
 	}
 
@@ -75,7 +75,7 @@ func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccoun
 
 	// 2. Slip queue into generic LedgerCommand.
 	s.Queue <- domain.LedgerCommand{
-		Type: "INITIALISE",
+		Type: domain.InitialiseAccountCommand,
 		InitAccount: initReq,
 	}
 

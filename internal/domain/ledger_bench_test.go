@@ -131,7 +131,7 @@ func BenchmarkActorTransfers_LowContention(b *testing.B) {
 
 			// Drop the request into the queue.
 			queue <- LedgerCommand{
-				Type:     "TRANSFER",
+				Type:     TransferCommand,
 				Transfer: req,
 			}
 
@@ -179,7 +179,7 @@ func BenchmarkActorTransfers_HighContention(b *testing.B) {
 			}
 
 			queue <- LedgerCommand{
-				Type:     "TRANSFER",
+				Type:     TransferCommand,
 				Transfer: req,
 			}
 

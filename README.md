@@ -111,7 +111,6 @@ The actor model gets slower under low contention on multiple cores because all g
 
 - **No persistence** — all state is lost on restart
 - **Actor throughput ceiling** — every operation, regardless of which accounts it touches, queues behind every other operation
-- **`LedgerCommand.Type` is a string** — a typo silently drops a command with no error
 - **`context.Context` is ignored** in gRPC handlers — client disconnects cannot cancel in-flight operations
 - **Errors are not wrapped** in some places, making production debugging harder than it needs to be
 

@@ -12,6 +12,11 @@ const (
 	StatusFailedFunds
 )
 
+const (
+	TransferCommand = iota
+	InitialiseAccountCommand
+)
+
 // TransferResponse struct is our response struct we use to ship through our channel.
 type TransferResponse struct {
 	Success bool
@@ -36,7 +41,7 @@ type InitialiseAccountRequest struct {
 
 // LedgerCommand acts as a single object, so our channel can use it.
 type LedgerCommand struct {
-	Type        string
+	Type        int
 	Transfer    *TransferRequest
 	InitAccount *InitialiseAccountRequest
 }
