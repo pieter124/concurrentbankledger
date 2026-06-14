@@ -127,6 +127,97 @@ func (ledger *Ledger) executePureInitialise(username string, startingBalance int
 	return nil
 }
 
+// executeReserve runs on the SOURCE shard. It holds the funds and records a pending txn.
+// It deliberately does NOT look at the target.
+func (ledger *Ledger) executeReserve(source, target string, amount int64, key string) ReserveResponse {
+	if amount <= 0 {
+		return ReserveResponse{} 
+	}
+
+	sourceAccount, exists := ledger.Account[source]
+	if !exists {
+		return ReserveResponse{} 
+	}
+
+	// Idempotency check..
+	if rec, ok := ledger.AttemptedTransactions[key]; ok {
+		if rec.Source != source || rec.Target != target || rec.Amount != amount {
+			return ReserveResponse{Err: fmt.Errorf("payload mismatch for key %s", key)}
+		}
+		switch rec.Status {
+		case StatusSuccess:
+			return ReserveResponse{TxnID: rec.ID, AlreadyDone: true} // already fully done — do NOT credit again
+		case StatusPending:
+			return ReserveResponse{Err: fmt.Errorf("key %s is already being processed", key)}
+		default:
+			return ReserveResponse{Err: fmt.Errorf("key %s previously failed", key)}
+		}
+	}
+
+	// Funds check BEFORE any mutation, so a rejected reserve leaves source untouched.
+	if sourceAccount.GetBalance() < amount {
+		ledger.AttemptedTransactions[key] = &IdempotencyRecord{
+			ID: key, Source: source, Target: target, Amount: amount, Status: StatusFailedFunds,
+		}
+		return ReserveResponse{Err: fmt.Errorf("insufficient funds on key %s", key)}
+	}
+
+	// Hold the money: mint an id, record pending, subtract from source, log the global txn.
+	id := uuid.NewString()
+	ledger.AttemptedTransactions[key] = &IdempotencyRecord{
+		ID: id, Source: source, Target: target, Amount: amount, Status: StatusPending,
+	}
+	ledger.LedgerHistory = append(ledger.LedgerHistory, Transaction{
+		ID: id, Source: source, Target: target, Amount: amount, Timestamp: time.Now(),
+	})
+	sourceAccount.History = append(sourceAccount.History, LocalAccountTransaction{
+		TransactionID: id, Amount: -amount,
+	})
+
+	return ReserveResponse{TxnID: id, Proceed: true}
+}
+
+// executeCredit runs on the TARGET shard.
+func (ledger *Ledger) executeCredit(target string, amount int64, txnID string) (bool, error) {
+	targetAccount, exists := ledger.Account[target]
+	if !exists {
+		return false, fmt.Errorf("target account %s does not exist", target)
+	}
+	targetAccount.History = append(targetAccount.History, LocalAccountTransaction{
+		TransactionID: txnID,
+		Amount:        amount, // +ve: money arriving
+	})
+	return true, nil
+}
+
+// executeFinalize runs on the SOURCE shard. After credit confirms, flip pending -> success.
+func (ledger *Ledger) executeFinalize(key string) (bool, error) {
+	rec, ok := ledger.AttemptedTransactions[key]
+	if !ok {
+		return false, fmt.Errorf("no reservation to finalize for key %s", key)
+	}
+	rec.Status = StatusSuccess
+	return true, nil
+}
+
+// executeRefund runs on the SOURCE shard. If credit failed, give the held money back
+func (ledger *Ledger) executeRefund(key string) (bool, error) {
+	rec, ok := ledger.AttemptedTransactions[key]
+	if !ok || rec.Status != StatusPending {
+		return false, nil 
+	}
+	sourceAccount, exists := ledger.Account[rec.Source]
+	if !exists {
+		return false, fmt.Errorf("refund: source %s missing", rec.Source)
+	}
+	sourceAccount.History = append(sourceAccount.History, LocalAccountTransaction{
+		TransactionID: rec.ID, 
+		Amount:        rec.Amount, // +ve: money returning to source
+	})
+	rec.Status = StatusFailedFunds
+	return true, nil
+}
+
 // StartActorLoop boots up the single-threaded engine processor.
 // It continuously reads commands from the queue and executes them lock-free.
 func (ledger *Ledger) StartActorLoop(queue chan LedgerCommand, wg *sync.WaitGroup) {
@@ -147,7 +238,24 @@ func (ledger *Ledger) StartActorLoop(queue chan LedgerCommand, wg *sync.WaitGrou
 				err := ledger.executePureInitialise(req.Username, req.StartingBalance)
 				// Mail the single error object back to the waiting caller
 				req.ReplyTo <- err
-			}
+			
+			case ReserveCommand:
+				r := cmd.Reserve
+				r.ReplyTo <- ledger.executeReserve(r.Source, r.Target, r.Amount, r.IdempotencyKey)
+			
+			case CreditCommand:
+				r := cmd.Credit
+				ok, err := ledger.executeCredit(r.Target, r.Amount, r.TxnID)
+				r.ReplyTo <- TransferResponse{Success: ok, Err: err}
+			
+			case FinalizeCommand:
+				ok, err := ledger.executeFinalize(cmd.Finalize.IdempotencyKey)
+				cmd.Finalize.ReplyTo <- TransferResponse{Success: ok, Err: err}
+
+			case RefundCommand:
+				ok, err := ledger.executeRefund(cmd.Refund.IdempotencyKey)
+				cmd.Refund.ReplyTo <- TransferResponse{Success: ok, Err: err}			
+			}	
 		}
 	})
 }

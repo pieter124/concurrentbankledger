@@ -12,10 +12,47 @@ const (
 	StatusFailedFunds
 )
 
+// An enum to help define what commands our actor loop is expected to receive.
 const (
 	TransferCommand = iota
 	InitialiseAccountCommand
+	ReserveCommand
+	CreditCommand
+	RefundCommand
+	FinalizeCommand
 )
+
+// ReserveResponse carries three distinct signals back to the coordinator.
+type ReserveResponse struct {
+	TxnID       string
+	Proceed     bool
+	AlreadyDone bool
+	Err         error
+}
+
+// ReserveRequest runs on the SOURCE shard: holds the funds
+type ReserveRequest struct {
+	Source string
+	Target string
+	Amount int64
+	IdempotencyKey string
+	ReplyTo chan ReserveResponse
+}
+
+// CreditRequest runs on the TARGET shard: add the funds, reusing the txn id from the reserve.
+type CreditRequest struct {
+	Target string
+	Amount int64
+	TxnID string
+	ReplyTo chan TransferResponse
+}
+
+// KeyedRequest ...
+type KeyedRequest struct {
+	IdempotencyKey string
+	ReplyTo chan TransferResponse
+}
+
 
 // TransferResponse struct is our response struct we use to ship through our channel.
 type TransferResponse struct {
@@ -44,6 +81,10 @@ type LedgerCommand struct {
 	Type        int
 	Transfer    *TransferRequest
 	InitAccount *InitialiseAccountRequest
+	Reserve     *ReserveRequest
+	Credit      *CreditRequest
+	Refund      *KeyedRequest
+	Finalize    *KeyedRequest
 }
 
 // Transaction struct represents the financial transaction that obeys our zero-sum rule.

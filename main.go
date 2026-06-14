@@ -16,33 +16,29 @@ import (
 const (
 	NoOfActors      = 8
 	QueueBufferSize = 10000
-	ServerPort      = "8080"
+	ServerPort      = ":8080"
 )
 
 func main() {
-	ledger := domain.InitialiseLedger()
-
 	queues := make([]chan domain.LedgerCommand, NoOfActors)
-	
+	ledgers := make([]*domain.Ledger, NoOfActors) // one ledger per shard
+
 	for i := range NoOfActors {
 		queues[i] = make(chan domain.LedgerCommand, QueueBufferSize)
+		ledgers[i] = domain.InitialiseLedger()
 	}
 
 	var wg sync.WaitGroup
-
-	// Boot lock-free background engine loop...
+	// Each actor loop drains ITS OWN queue into ITS OWN ledger — no shared state.
 	for i := range NoOfActors {
-		ledger.StartActorLoop(queues[i], &wg)
+		ledgers[i].StartActorLoop(queues[i], &wg)
 	}
 
-	// Pass the queue into the server runner instead of the ledger...
-	// We can capture the running server object so we can stop it later...
 	gRPCServer, listen, err := grpc.StartGRPCServer(ServerPort, queues)
 	if err != nil {
 		log.Fatalf("gRPC server crashed: %v", err)
 	}
 
-	// Start serving network traffic in an independent background thread...
 	go func() {
 		if err := gRPCServer.Serve(listen); err != nil && err != g.ErrServerStopped {
 			log.Printf("gRPC server runtime failure: %v", err)
@@ -51,13 +47,12 @@ func main() {
 
 	shutdownSignal := make(chan os.Signal, 1)
 	signal.Notify(shutdownSignal, syscall.SIGINT, syscall.SIGTERM)
-
 	<-shutdownSignal
-	gRPCServer.GracefulStop()
 
-	
+	gRPCServer.GracefulStop()
 	for i := range NoOfActors {
 		close(queues[i])
 	}
 	wg.Wait()
 }
+

@@ -27,50 +27,89 @@ func getActorIndex(key string, NoOfActors int) int {
 	return int(hasher.Sum32()) % NoOfActors
 } 
 
+func sendTransfer(q chan domain.LedgerCommand, source, target string, amount int64, key string) (bool, error) {
+	reply := make(chan domain.TransferResponse, 1)
+	q <- domain.LedgerCommand{Type: domain.TransferCommand, Transfer: &domain.TransferRequest{
+		Source: source, Target: target, Amount: amount, IdempotencyKey: key, ReplyTo: reply,
+	}}
+	r := <-reply
+	return r.Success, r.Err
+}
+
+func sendReserve(q chan domain.LedgerCommand, source, target string, amount int64, key string) domain.ReserveResponse {
+	reply := make(chan domain.ReserveResponse, 1)
+	q <- domain.LedgerCommand{Type: domain.ReserveCommand, Reserve: &domain.ReserveRequest{
+		Source: source, Target: target, Amount: amount, IdempotencyKey: key, ReplyTo: reply,
+	}}
+	return <-reply
+}
+
+func sendCredit(q chan domain.LedgerCommand, target string, amount int64, txnID string) (bool, error) {
+	reply := make(chan domain.TransferResponse, 1)
+	q <- domain.LedgerCommand{Type: domain.CreditCommand, Credit: &domain.CreditRequest{
+		Target: target, Amount: amount, TxnID: txnID, ReplyTo: reply,
+	}}
+	r := <-reply
+	return r.Success, r.Err
+}
+
+// sendKeyed handles both refund and finalize — both only carry a key.
+func sendKeyed(q chan domain.LedgerCommand, cmdType int, key string) {
+	reply := make(chan domain.TransferResponse, 1)
+	kr := &domain.KeyedRequest{IdempotencyKey: key, ReplyTo: reply}
+	cmd := domain.LedgerCommand{Type: cmdType}
+	if cmdType == domain.RefundCommand {
+		cmd.Refund = kr
+	} else {
+		cmd.Finalize = kr
+	}
+	q <- cmd
+	<-reply
+}
+
+func (s *Server) routeTransfer(source, target string, amount int64, key string) (bool, error) {
+	n := len(s.Queues)
+	srcIdx := getActorIndex(source, n)
+	tgtIdx := getActorIndex(target, n)
+
+	// Same shard case: one actor owns both accounts.
+	if srcIdx == tgtIdx {
+		return sendTransfer(s.Queues[srcIdx], source, target, amount, key)
+	}
+
+	// Cross-shard: hold on source, deliver on target, then mark done (or undo).
+	res := sendReserve(s.Queues[srcIdx], source, target, amount, key)
+	switch {
+	case res.Err != nil:
+		return false, res.Err
+	case res.AlreadyDone: // completed retry — money already moved, don't credit again
+		return true, nil
+	case !res.Proceed: // rejected (bad amount / unknown source)
+		return false, nil
+	}
+
+	ok, err := sendCredit(s.Queues[tgtIdx], target, amount, res.TxnID)
+	if err != nil || !ok {
+		sendKeyed(s.Queues[srcIdx], domain.RefundCommand, key) // credit failed -> return held money
+		return false, err
+	}
+
+	sendKeyed(s.Queues[srcIdx], domain.FinalizeCommand, key) // credit landed -> pending becomes success
+	return true, nil
+}
+
 // Transfer implements the exact gRPC method we defined in our ledger.proto file.
 func (s *Server) Transfer(ctx context.Context, req *pb.TransferRequest) (*pb.TransferResponse, error) {
-	// 1. Create a reply channel..
-	replyChan := make(chan domain.TransferResponse, 1)
-
-	// 2. Build the structural Request payload slip.
-	transferReq := &domain.TransferRequest{
-		Source: req.GetSource(),
-		Target: req.GetTarget(),
-		Amount: req.GetAmount(),
-		IdempotencyKey: req.GetIdempotencyKey(),
-		ReplyTo: replyChan,
+	ok, err := s.routeTransfer(req.GetSource(), req.GetTarget(), req.GetAmount(), req.GetIdempotencyKey())
+	if err != nil {
+		return &pb.TransferResponse{Success: false, Message: err.Error()}, nil
 	}
-	
-	// 2.5 Get the actor queue...
-	idx := getActorIndex(transferReq.Source, 8)
-	
-	// 3. Slip queue inside a generic LedgerCommand and drop it down the channel.
-	s.Queues[idx] <- domain.LedgerCommand{
-		Type: domain.TransferCommand,
-		Transfer: transferReq,
+	if !ok {
+		return &pb.TransferResponse{Success: false,
+			Message: fmt.Sprintf("transfer rejected: %s -> %s", req.GetSource(), req.GetTarget())}, nil
 	}
-
-	// 4. Freeze here! blocks completely until the background worker thread gives us back the reply...
-	res := <-replyChan
-
-	if res.Err != nil {
-		return &pb.TransferResponse{
-			Success: false,
-			Message: res.Err.Error(),
-		}, nil
-	}
-
-	if !res.Success {
-		return &pb.TransferResponse{
-			Success: false,
-			Message: fmt.Sprintf("Transfer rejected by core engine... %s -> %s", req.GetSource(), req.GetTarget()),
-		}, nil
-	}
-
-	return &pb.TransferResponse{
-		Success: true,
-		Message: fmt.Sprintf("Successfully transferred %d from %s to %s!", req.GetAmount(), req.GetSource(), req.GetTarget()),
-	}, nil
+	return &pb.TransferResponse{Success: true,
+		Message: fmt.Sprintf("transferred %d from %s to %s", req.GetAmount(), req.GetSource(), req.GetTarget())}, nil
 }
 
 func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccountRequest) (*pb.InitialiseAccountResponse, error) {
@@ -83,8 +122,11 @@ func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccoun
 		ReplyTo: replyChan,
 	}
 	
+	
+	n := len(s.Queues)
+
 	// 1.5. Get actor index...
-	idx := getActorIndex(initReq.Username, 8)
+	idx := getActorIndex(initReq.Username, n)
 	
 
 	// 2. Slip queue into generic LedgerCommand.
