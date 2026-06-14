@@ -13,20 +13,31 @@ import (
 	g "google.golang.org/grpc"
 )
 
+const (
+	NoOfActors      = 8
+	QueueBufferSize = 10000
+	ServerPort      = "8080"
+)
+
 func main() {
 	ledger := domain.InitialiseLedger()
-	queue := make(chan domain.LedgerCommand, 10000)
+
+	queues := make([]chan domain.LedgerCommand, NoOfActors)
+	
+	for i := range NoOfActors {
+		queues[i] = make(chan domain.LedgerCommand, QueueBufferSize)
+	}
 
 	var wg sync.WaitGroup
 
 	// Boot lock-free background engine loop...
-	ledger.StartActorLoop(queue, &wg)
-
-	serverPort := ":8080"
+	for i := range NoOfActors {
+		ledger.StartActorLoop(queues[i], &wg)
+	}
 
 	// Pass the queue into the server runner instead of the ledger...
 	// We can capture the running server object so we can stop it later...
-	gRPCServer, listen, err := grpc.StartGRPCServer(serverPort, queue)
+	gRPCServer, listen, err := grpc.StartGRPCServer(ServerPort, queues)
 	if err != nil {
 		log.Fatalf("gRPC server crashed: %v", err)
 	}
@@ -44,6 +55,9 @@ func main() {
 	<-shutdownSignal
 	gRPCServer.GracefulStop()
 
-	close(queue)
+	
+	for i := range NoOfActors {
+		close(queues[i])
+	}
 	wg.Wait()
 }

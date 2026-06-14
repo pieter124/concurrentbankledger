@@ -131,9 +131,6 @@ func (ledger *Ledger) executePureInitialise(username string, startingBalance int
 // It continuously reads commands from the queue and executes them lock-free.
 func (ledger *Ledger) StartActorLoop(queue chan LedgerCommand, wg *sync.WaitGroup) {
 	wg.Go(func() {
-		// 1. Add this print statement so you know the engine is alive
-		fmt.Println("[Actor] Background engine loop initialized safely.")
-
 		for cmd := range queue {
 			switch cmd.Type {
 
@@ -152,8 +149,5 @@ func (ledger *Ledger) StartActorLoop(queue chan LedgerCommand, wg *sync.WaitGrou
 				req.ReplyTo <- err
 			}
 		}
-		// 2. Add this print statement right here!
-		// It only executes AFTER the queue is closed AND completely empty.
-		fmt.Println("[Actor] Mailbox closed and drained. Background loop exiting cleanly.")
 	})
 }

@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
-
+	"hash/fnv"
 	"concurrent-bank-ledger/internal/domain"
 
 	// Import the gRPC code that protoc just generated for you...
@@ -17,8 +17,15 @@ import (
 // Server represents our gRPC adapter...
 type Server struct {
 	pb.UnimplementedLedgerServiceServer
-	Queue chan domain.LedgerCommand
+	Queues []chan domain.LedgerCommand
 }
+
+func getActorIndex(key string, NoOfActors int) int {
+	hasher := fnv.New32a()
+	hasher.Write([]byte(key))
+
+	return int(hasher.Sum32()) % NoOfActors
+} 
 
 // Transfer implements the exact gRPC method we defined in our ledger.proto file.
 func (s *Server) Transfer(ctx context.Context, req *pb.TransferRequest) (*pb.TransferResponse, error) {
@@ -34,8 +41,11 @@ func (s *Server) Transfer(ctx context.Context, req *pb.TransferRequest) (*pb.Tra
 		ReplyTo: replyChan,
 	}
 	
+	// 2.5 Get the actor queue...
+	idx := getActorIndex(transferReq.Source, 8)
+	
 	// 3. Slip queue inside a generic LedgerCommand and drop it down the channel.
-	s.Queue <- domain.LedgerCommand{
+	s.Queues[idx] <- domain.LedgerCommand{
 		Type: domain.TransferCommand,
 		Transfer: transferReq,
 	}
@@ -72,9 +82,13 @@ func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccoun
 		StartingBalance: req.GetBalance(),
 		ReplyTo: replyChan,
 	}
+	
+	// 1.5. Get actor index...
+	idx := getActorIndex(initReq.Username, 8)
+	
 
 	// 2. Slip queue into generic LedgerCommand.
-	s.Queue <- domain.LedgerCommand{
+	s.Queues[idx] <- domain.LedgerCommand{
 		Type: domain.InitialiseAccountCommand,
 		InitAccount: initReq,
 	}
@@ -95,7 +109,7 @@ func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccoun
 }
 
 // StartGRPCServer is a helper function to bind our server.
-func StartGRPCServer(port string, queue chan domain.LedgerCommand) (*g.Server, net.Listener, error) {
+func StartGRPCServer(port string, queues  []chan domain.LedgerCommand) (*g.Server, net.Listener, error) {
 	// Open a standard TCP network port listener...
 	listener, err := net.Listen("tcp", port)
 	if err != nil {
@@ -107,7 +121,7 @@ func StartGRPCServer(port string, queue chan domain.LedgerCommand) (*g.Server, n
 
 	// Instantiate our custom Server struct with the domain ledger...
 	srv := &Server{
-		Queue: queue,
+		Queues: queues,
 	}
 
 	// Register our implementation with the gRPC server router...
