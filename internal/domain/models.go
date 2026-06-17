@@ -10,6 +10,7 @@ const (
 	StatusPending = iota
 	StatusSuccess
 	StatusFailedFunds
+	StatusAborted
 )
 
 // An enum to help define what commands our actor loop is expected to receive.
@@ -32,27 +33,26 @@ type ReserveResponse struct {
 
 // ReserveRequest runs on the SOURCE shard: holds the funds
 type ReserveRequest struct {
-	Source string
-	Target string
-	Amount int64
+	Source         string
+	Target         string
+	Amount         int64
 	IdempotencyKey string
-	ReplyTo chan ReserveResponse
+	ReplyTo        chan ReserveResponse
 }
 
 // CreditRequest runs on the TARGET shard: add the funds, reusing the txn id from the reserve.
 type CreditRequest struct {
-	Target string
-	Amount int64
-	TxnID string
+	Target  string
+	Amount  int64
+	TxnID   string
 	ReplyTo chan TransferResponse
 }
 
 // KeyedRequest ...
 type KeyedRequest struct {
 	IdempotencyKey string
-	ReplyTo chan TransferResponse
+	ReplyTo        chan TransferResponse
 }
-
 
 // TransferResponse struct is our response struct we use to ship through our channel.
 type TransferResponse struct {
@@ -89,41 +89,41 @@ type LedgerCommand struct {
 
 // Transaction struct represents the financial transaction that obeys our zero-sum rule.
 type Transaction struct {
-	ID        string    `json:"id"`        // Unique identifier of transaction.
-	Source    string    `json:"source"`    // Username sending the money.
-	Target    string    `json:"target"`    // Username receiving the money.
-	Amount    int64     `json:"amount"`    // Always in pence (e.g. £10.50 = 1050p).
-	Timestamp time.Time `json:"timestamp"` // Timestamp of the financial transaction.
+	ID        string    // Unique identifier of transaction.
+	Source    string    // Username sending the money.
+	Target    string    // Username receiving the money.
+	Amount    int64     // Always in pence (e.g. £10.50 = 1050p).
+	Timestamp time.Time // Timestamp of the financial transaction.
 }
 
 // LocalAccountTransaction represents financial transactions local to an account, for faster derivation of the balance.
 type LocalAccountTransaction struct {
-	TransactionID string `json:"transactionid"` // Identifier of the transaction object it belongs to.
-	Amount        int64  `json:"amount"`        // -ve for credit and +ve for debit.
+	TransactionID string // Identifier of the transaction object it belongs to.
+	Amount        int64  // -ve for credit and +ve for debit.
 }
 
 // Account struct represents any financial entity allowed to perform financial transactions.
 type Account struct {
 	sync.Mutex                           // Anonymous approach (allows you to use explicit function calls).
-	Username   string                    `json:"username"` // Unique identifier of account.
-	History    []LocalAccountTransaction `json:"history"`  // A list of transactions local to the account.
+	Username   string                    // Unique identifier of account.
+	History    []LocalAccountTransaction // A list of transactions local to the account.
 }
 
 // IdempotencyRecord struct helps to ensure transactions are not repeated and only done once.
 type IdempotencyRecord struct {
-	ID     string `json:"id"`
-	Source string `json:"source"`
-	Target string `json:"target"`
-	Amount int64  `json:"amount"`
-	Status int    `json:"status"`
+	ID     string
+	Source string
+	Target string
+	Amount int64
+	Status int
 }
 
 // Ledger struct represents the supported accounts and the global history of financial transactions.
 type Ledger struct {
-	sync.Mutex                                          // Anonymous approach (allows you to use explicit function calls).
-	Account               map[string]*Account           `json:"accounts"`
-	AttemptedTransactions map[string]*IdempotencyRecord `json:"attemptedtransactions"`
-	LedgerHistory         []Transaction                 `json:"ledgerhistory"`
+	sync.Mutex            // Anonymous approach (allows you to use explicit function calls).
+	Account               map[string]*Account
+	AttemptedTransactions map[string]*IdempotencyRecord
+	LedgerHistory         []Transaction
 }
 
 /* BASIC UTILITIES */

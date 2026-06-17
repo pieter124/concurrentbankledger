@@ -131,12 +131,12 @@ func (ledger *Ledger) executePureInitialise(username string, startingBalance int
 // It deliberately does NOT look at the target.
 func (ledger *Ledger) executeReserve(source, target string, amount int64, key string) ReserveResponse {
 	if amount <= 0 {
-		return ReserveResponse{} 
+		return ReserveResponse{}
 	}
 
 	sourceAccount, exists := ledger.Account[source]
 	if !exists {
-		return ReserveResponse{} 
+		return ReserveResponse{}
 	}
 
 	// Idempotency check..
@@ -204,14 +204,14 @@ func (ledger *Ledger) executeFinalize(key string) (bool, error) {
 func (ledger *Ledger) executeRefund(key string) (bool, error) {
 	rec, ok := ledger.AttemptedTransactions[key]
 	if !ok || rec.Status != StatusPending {
-		return false, nil 
+		return false, nil
 	}
 	sourceAccount, exists := ledger.Account[rec.Source]
 	if !exists {
 		return false, fmt.Errorf("refund: source %s missing", rec.Source)
 	}
 	sourceAccount.History = append(sourceAccount.History, LocalAccountTransaction{
-		TransactionID: rec.ID, 
+		TransactionID: rec.ID,
 		Amount:        rec.Amount, // +ve: money returning to source
 	})
 	rec.Status = StatusFailedFunds
@@ -238,24 +238,24 @@ func (ledger *Ledger) StartActorLoop(queue chan LedgerCommand, wg *sync.WaitGrou
 				err := ledger.executePureInitialise(req.Username, req.StartingBalance)
 				// Mail the single error object back to the waiting caller
 				req.ReplyTo <- err
-			
+
 			case ReserveCommand:
 				r := cmd.Reserve
 				r.ReplyTo <- ledger.executeReserve(r.Source, r.Target, r.Amount, r.IdempotencyKey)
-			
+
 			case CreditCommand:
 				r := cmd.Credit
 				ok, err := ledger.executeCredit(r.Target, r.Amount, r.TxnID)
 				r.ReplyTo <- TransferResponse{Success: ok, Err: err}
-			
+
 			case FinalizeCommand:
 				ok, err := ledger.executeFinalize(cmd.Finalize.IdempotencyKey)
 				cmd.Finalize.ReplyTo <- TransferResponse{Success: ok, Err: err}
 
 			case RefundCommand:
 				ok, err := ledger.executeRefund(cmd.Refund.IdempotencyKey)
-				cmd.Refund.ReplyTo <- TransferResponse{Success: ok, Err: err}			
-			}	
+				cmd.Refund.ReplyTo <- TransferResponse{Success: ok, Err: err}
+			}
 		}
 	})
 }
