@@ -18,6 +18,7 @@ import (
 type Server struct {
 	pb.UnimplementedLedgerServiceServer
 	Queues []chan domain.LedgerCommand
+	WAL domain.WAL
 }
 
 func getActorIndex(key string, NoOfActors int) int {
@@ -108,8 +109,28 @@ func (s *Server) Transfer(ctx context.Context, req *pb.TransferRequest) (*pb.Tra
 		return &pb.TransferResponse{Success: false,
 			Message: fmt.Sprintf("transfer rejected: %s -> %s", req.GetSource(), req.GetTarget())}, nil
 	}
-	return &pb.TransferResponse{Success: true,
-		Message: fmt.Sprintf("transferred %d from %s to %s", req.GetAmount(), req.GetSource(), req.GetTarget())}, nil
+	// operation committed, record durably...
+	entry := &domain.WALEntry{
+		CommandType: domain.TransferCommand,
+		TransferInfo: &domain.WALTransfer{
+			Source: req.GetSource(),
+			Target: req.GetTarget(),
+			Amount: req.GetAmount(),
+			IdempotencyRecord: req.GetIdempotencyKey(),
+		},
+		InitialiseAccountInfo: nil,
+	}
+	if err := s.WAL.Append(entry); err != nil {
+		return &pb.TransferResponse{
+			Success: false,
+			Message: "failed to persist: " + err.Error(),
+		}, nil
+	}
+	
+	return &pb.TransferResponse{
+		Success: true,
+		Message: fmt.Sprintf("transferred %d from %s to %s", req.GetAmount(), req.GetSource(), req.GetTarget()),
+	}, nil
 }
 
 func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccountRequest) (*pb.InitialiseAccountResponse, error) {
@@ -121,7 +142,6 @@ func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccoun
 		StartingBalance: req.GetBalance(),
 		ReplyTo: replyChan,
 	}
-	
 	
 	n := len(s.Queues)
 
@@ -144,6 +164,22 @@ func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccoun
 		}, nil
 	}
 
+	entry := &domain.WALEntry{
+		CommandType: domain.InitialiseAccountCommand,
+		TransferInfo: nil,
+		InitialiseAccountInfo: &domain.WALInit{
+			Username: req.GetUsername(),
+			StartingBalance: req.GetBalance(),
+		},
+	}
+
+	if err := s.WAL.Append(entry); err != nil {
+		return &pb.InitialiseAccountResponse{
+			Success: false,
+			Message: "failed to persist: " + err.Error(),
+		}, nil
+	}
+
 	return &pb.InitialiseAccountResponse{
 		Success: true,
 		Message: fmt.Sprintf("Successfully initialised account %s with %d starting balance!", req.GetUsername(), req.GetBalance()),
@@ -151,7 +187,7 @@ func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccoun
 }
 
 // StartGRPCServer is a helper function to bind our server.
-func StartGRPCServer(port string, queues  []chan domain.LedgerCommand) (*g.Server, net.Listener, error) {
+func StartGRPCServer(port string, queues  []chan domain.LedgerCommand, wal domain.WAL) (*g.Server, net.Listener, error) {
 	// Open a standard TCP network port listener...
 	listener, err := net.Listen("tcp", port)
 	if err != nil {
@@ -164,6 +200,7 @@ func StartGRPCServer(port string, queues  []chan domain.LedgerCommand) (*g.Serve
 	// Instantiate our custom Server struct with the domain ledger...
 	srv := &Server{
 		Queues: queues,
+		WAL: wal,
 	}
 
 	// Register our implementation with the gRPC server router...

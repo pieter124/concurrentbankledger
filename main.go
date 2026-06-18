@@ -34,7 +34,12 @@ func main() {
 		ledgers[i].StartActorLoop(queues[i], &wg)
 	}
 
-	gRPCServer, listen, err := grpc.StartGRPCServer(ServerPort, queues)
+	wal, err := domain.NewFileWAL("ledger.wal")
+	if err != nil {
+		log.Fatalf("could not open WAL: %v", err)
+	}
+
+	gRPCServer, listen, err := grpc.StartGRPCServer(ServerPort, queues, wal)
 	if err != nil {
 		log.Fatalf("gRPC server crashed: %v", err)
 	}
