@@ -147,7 +147,6 @@ func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccoun
 
 	// 1.5. Get actor index...
 	idx := getActorIndex(initReq.Username, n)
-	
 
 	// 2. Slip queue into generic LedgerCommand.
 	s.Queues[idx] <- domain.LedgerCommand{
@@ -188,6 +187,7 @@ func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccoun
 
 // StartGRPCServer is a helper function to bind our server.
 func StartGRPCServer(port string, queues  []chan domain.LedgerCommand, wal domain.WAL) (*g.Server, net.Listener, error) {
+	
 	// Open a standard TCP network port listener...
 	listener, err := net.Listen("tcp", port)
 	if err != nil {
