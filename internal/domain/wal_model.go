@@ -33,7 +33,7 @@ type WALTransfer struct {
 	Source            string
 	Target            string
 	Amount            int64
-	IdempotencyRecord string
+	IdempotencyKey string
 }
 
 // WALInit is a struct that holds all the required fields for the WAL to hold an initialise account request entry...

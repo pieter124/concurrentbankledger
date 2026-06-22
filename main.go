@@ -22,7 +22,6 @@ const (
 func main() {
 	queues := make([]chan domain.LedgerCommand, NoOfActors)
 	ledgers := make([]*domain.Ledger, NoOfActors) // one ledger per shard
-
 	for i := range NoOfActors {
 		queues[i] = make(chan domain.LedgerCommand, QueueBufferSize)
 		ledgers[i] = domain.InitialiseLedger()
@@ -34,11 +33,14 @@ func main() {
 		ledgers[i].StartActorLoop(queues[i], &wg)
 	}
 
+	// Start WAL...
 	wal, err := domain.NewFileWAL("ledger.wal")
 	if err != nil {
 		log.Fatalf("could not open WAL: %v", err)
 	}
 
+	// Start gRPC server...
+	// This also replays the WAL...
 	gRPCServer, listen, err := grpc.StartGRPCServer(ServerPort, queues, wal)
 	if err != nil {
 		log.Fatalf("gRPC server crashed: %v", err)
@@ -60,4 +62,3 @@ func main() {
 	}
 	wg.Wait()
 }
-

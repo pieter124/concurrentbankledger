@@ -4,8 +4,9 @@ package grpc
 import (
 	"context"
 	"fmt"
-	"net"
 	"hash/fnv"
+	"net"
+
 	"concurrent-bank-ledger/internal/domain"
 
 	// Import the gRPC code that protoc just generated for you...
@@ -18,7 +19,7 @@ import (
 type Server struct {
 	pb.UnimplementedLedgerServiceServer
 	Queues []chan domain.LedgerCommand
-	WAL domain.WAL
+	WAL    domain.WAL
 }
 
 func getActorIndex(key string, NoOfActors int) int {
@@ -26,7 +27,7 @@ func getActorIndex(key string, NoOfActors int) int {
 	hasher.Write([]byte(key))
 
 	return int(hasher.Sum32()) % NoOfActors
-} 
+}
 
 func sendTransfer(q chan domain.LedgerCommand, source, target string, amount int64, key string) (bool, error) {
 	reply := make(chan domain.TransferResponse, 1)
@@ -41,7 +42,7 @@ func sendReserve(q chan domain.LedgerCommand, source, target string, amount int6
 	reply := make(chan domain.ReserveResponse, 1)
 	q <- domain.LedgerCommand{Type: domain.ReserveCommand, Reserve: &domain.ReserveRequest{
 		Source: source, Target: target, Amount: amount, IdempotencyKey: key, ReplyTo: reply,
-	}}
+		}}
 	return <-reply
 }
 
@@ -68,7 +69,7 @@ func sendKeyed(q chan domain.LedgerCommand, cmdType int, key string) {
 	<-reply
 }
 
-func (s *Server) routeTransfer(source, target string, amount int64, key string) (bool, error) {
+func (s *Server) RouteTransfer(source string, target string, amount int64, key string) (bool, error) {
 	n := len(s.Queues)
 	srcIdx := getActorIndex(source, n)
 	tgtIdx := getActorIndex(target, n)
@@ -101,22 +102,24 @@ func (s *Server) routeTransfer(source, target string, amount int64, key string) 
 
 // Transfer implements the exact gRPC method we defined in our ledger.proto file.
 func (s *Server) Transfer(ctx context.Context, req *pb.TransferRequest) (*pb.TransferResponse, error) {
-	ok, err := s.routeTransfer(req.GetSource(), req.GetTarget(), req.GetAmount(), req.GetIdempotencyKey())
+	ok, err := s.RouteTransfer(req.GetSource(), req.GetTarget(), req.GetAmount(), req.GetIdempotencyKey())
 	if err != nil {
 		return &pb.TransferResponse{Success: false, Message: err.Error()}, nil
 	}
 	if !ok {
-		return &pb.TransferResponse{Success: false,
-			Message: fmt.Sprintf("transfer rejected: %s -> %s", req.GetSource(), req.GetTarget())}, nil
+		return &pb.TransferResponse{
+			Success: false,
+			Message: fmt.Sprintf("transfer rejected: %s -> %s", req.GetSource(), req.GetTarget()),
+		}, nil
 	}
 	// operation committed, record durably...
 	entry := &domain.WALEntry{
 		CommandType: domain.TransferCommand,
 		TransferInfo: &domain.WALTransfer{
-			Source: req.GetSource(),
-			Target: req.GetTarget(),
-			Amount: req.GetAmount(),
-			IdempotencyRecord: req.GetIdempotencyKey(),
+			Source:            req.GetSource(),
+			Target:            req.GetTarget(),
+			Amount:            req.GetAmount(),
+			IdempotencyKey: req.GetIdempotencyKey(),
 		},
 		InitialiseAccountInfo: nil,
 	}
@@ -126,48 +129,52 @@ func (s *Server) Transfer(ctx context.Context, req *pb.TransferRequest) (*pb.Tra
 			Message: "failed to persist: " + err.Error(),
 		}, nil
 	}
-	
+
 	return &pb.TransferResponse{
 		Success: true,
 		Message: fmt.Sprintf("transferred %d from %s to %s", req.GetAmount(), req.GetSource(), req.GetTarget()),
 	}, nil
 }
 
-func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccountRequest) (*pb.InitialiseAccountResponse, error) {
+func (s *Server) RouteInit(username string, startingBalance int64) error {
+	
 	// 1. Allocate response channel...
 	replyChan := make(chan error, 1)
-
 	initReq := &domain.InitialiseAccountRequest{
-		Username: req.GetUsername(),
-		StartingBalance: req.GetBalance(),
-		ReplyTo: replyChan,
+		Username:        username,
+		StartingBalance: startingBalance,
+		ReplyTo:         replyChan,
 	}
-	
+
+	// 2. Get actor index...
 	n := len(s.Queues)
-
-	// 1.5. Get actor index...
 	idx := getActorIndex(initReq.Username, n)
-
-	// 2. Slip queue into generic LedgerCommand.
+	
+	// 3. Slip queue into generic LedgerCommand...
 	s.Queues[idx] <- domain.LedgerCommand{
 		Type: domain.InitialiseAccountCommand,
 		InitAccount: initReq,
 	}
 
-	// 3. Freeze...
 	err := <-replyChan
 	if err != nil {
-		return &pb.InitialiseAccountResponse{
-			Success: false,
-			Message: err.Error(),
-		}, nil
+		return err
 	}
+	return nil
+}
 
+func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccountRequest) (*pb.InitialiseAccountResponse, error) {
+	// 1. Allocate response channel...
+	err := s.RouteInit(req.GetUsername(), req.GetBalance())
+	if err != nil {
+		return &pb.InitialiseAccountResponse{Success: false, Message: err.Error()}, nil
+	}
+	
 	entry := &domain.WALEntry{
-		CommandType: domain.InitialiseAccountCommand,
+		CommandType:  domain.InitialiseAccountCommand,
 		TransferInfo: nil,
 		InitialiseAccountInfo: &domain.WALInit{
-			Username: req.GetUsername(),
+			Username:        req.GetUsername(),
 			StartingBalance: req.GetBalance(),
 		},
 	}
@@ -185,9 +192,37 @@ func (s *Server) InitialiseAccount(ctx context.Context, req *pb.InitialiseAccoun
 	}, nil
 }
 
+// Recover replays persisted WAL entries back into the ledger on startup...
+func (s *Server) Recover() error {
+	entries, err := s.WAL.Replay()
+	if err != nil {
+		return fmt.Errorf("WAL replay failed: %w", err)
+	}
+
+	for _, entry := range entries {
+		switch entry.CommandType {
+		case domain.TransferCommand:
+			t := entry.TransferInfo
+			ok, err := s.RouteTransfer(t.Source, t.Target, t.Amount, t.IdempotencyKey)
+			if err != nil {
+				return fmt.Errorf("replay transfer failed: %w", err)
+			}
+			if !ok {
+				return fmt.Errorf("replay transfer was rejected (source=%s target=%s)", t.Source, t.Target)
+			}
+
+		case domain.InitialiseAccountCommand:
+			a := entry.InitialiseAccountInfo
+			if err := s.RouteInit(a.Username, a.StartingBalance); err != nil {
+				return fmt.Errorf("replay init failed: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
 // StartGRPCServer is a helper function to bind our server.
-func StartGRPCServer(port string, queues  []chan domain.LedgerCommand, wal domain.WAL) (*g.Server, net.Listener, error) {
-	
+func StartGRPCServer(port string, queues []chan domain.LedgerCommand, wal domain.WAL) (*g.Server, net.Listener, error) {
 	// Open a standard TCP network port listener...
 	listener, err := net.Listen("tcp", port)
 	if err != nil {
@@ -200,9 +235,12 @@ func StartGRPCServer(port string, queues  []chan domain.LedgerCommand, wal domai
 	// Instantiate our custom Server struct with the domain ledger...
 	srv := &Server{
 		Queues: queues,
-		WAL: wal,
+		WAL:    wal,
 	}
 
+	if err := srv.Recover(); err != nil {
+		return nil, nil, err
+	}
 	// Register our implementation with the gRPC server router...
 	pb.RegisterLedgerServiceServer(gRPCServer, srv)
 
