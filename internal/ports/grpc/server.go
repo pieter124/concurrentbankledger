@@ -4,7 +4,6 @@ package grpc
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
 	"net"
 
 	"concurrent-bank-ledger/internal/domain"
@@ -20,13 +19,6 @@ type Server struct {
 	pb.UnimplementedLedgerServiceServer
 	Queues []chan domain.LedgerCommand
 	WAL    domain.WAL
-}
-
-func getActorIndex(key string, NoOfActors int) int {
-	hasher := fnv.New32a()
-	hasher.Write([]byte(key))
-
-	return int(hasher.Sum32()) % NoOfActors
 }
 
 func sendTransfer(q chan domain.LedgerCommand, source, target string, amount int64, key string) (bool, error) {
@@ -71,8 +63,8 @@ func sendKeyed(q chan domain.LedgerCommand, cmdType int, key string) {
 
 func (s *Server) RouteTransfer(source string, target string, amount int64, key string) (bool, error) {
 	n := len(s.Queues)
-	srcIdx := getActorIndex(source, n)
-	tgtIdx := getActorIndex(target, n)
+	srcIdx := domain.GetIndex(source, n)
+	tgtIdx := domain.GetIndex(target, n)
 
 	// Same shard case: one actor owns both accounts.
 	if srcIdx == tgtIdx {
@@ -147,8 +139,7 @@ func (s *Server) RouteInit(username string, startingBalance int64) error {
 	}
 
 	// 2. Get actor index...
-	n := len(s.Queues)
-	idx := getActorIndex(initReq.Username, n)
+	idx := domain.GetIndex(username, len(s.Queues))
 	
 	// 3. Slip queue into generic LedgerCommand...
 	s.Queues[idx] <- domain.LedgerCommand{
@@ -159,6 +150,15 @@ func (s *Server) RouteInit(username string, startingBalance int64) error {
 	err := <-replyChan
 	if err != nil {
 		return err
+	}
+
+	// Fund from mint, routes cross shard automatically...
+	ok, err := s.RouteTransfer("The Mint", username, startingBalance, "genesis-" + username)
+	if err != nil {
+		return fmt.Errorf("genesis funding failed for %s: %w", username, err)
+	}
+	if !ok {
+		return fmt.Errorf("genesis funding rejected for %s", username)
 	}
 	return nil
 }

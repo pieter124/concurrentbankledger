@@ -20,12 +20,16 @@ const (
 )
 
 func main() {
+	// Initialise actors and sharded ledger (an actor per shard to ensure no race conditions).
 	queues := make([]chan domain.LedgerCommand, NoOfActors)
 	ledgers := make([]*domain.Ledger, NoOfActors) // one ledger per shard
 	for i := range NoOfActors {
 		queues[i] = make(chan domain.LedgerCommand, QueueBufferSize)
 		ledgers[i] = domain.InitialiseLedger()
 	}
+	
+	mintShard := domain.GetIndex("The Mint", NoOfActors)
+	ledgers[mintShard].SeedMint()
 
 	var wg sync.WaitGroup
 	// Each actor loop drains ITS OWN queue into ITS OWN ledger — no shared state.

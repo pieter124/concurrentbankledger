@@ -1,14 +1,16 @@
 # Concurrent Bank Ledger
 
-A Go project exploring concurrency strategies through a simple banking domain. It compares three
-approaches to safely mutating shared financial state under concurrent load:
+A Go project exploring concurrency and durability through a simple banking domain. It implements and
+compares three strategies for safely mutating shared financial state under concurrent load, then adds a
+write-ahead log so that state survives a crash.
 
 1. **Fine-grained mutexes** — per-account locks with deadlock-free ordering
 2. **Single actor** — one goroutine owns all state; callers send commands over a channel
 3. **Sharded actors** — state partitioned across N actors, each owning a disjoint slice of accounts,
    with a two-phase protocol for transfers that cross a shard boundary
 
-All state lives in memory. There is no database.
+A **write-ahead log (WAL)** persists every committed operation to disk and replays it on startup, so the
+ledger recovers its full state after a restart or crash.
 
 ---
 
@@ -17,129 +19,110 @@ All state lives in memory. There is no database.
 A gRPC server exposing two operations:
 
 - **InitialiseAccount** — creates an account and funds it from a system mint via a genesis transfer
-- **Transfer** — moves an amount between two accounts, with idempotency protection against duplicate requests
+- **Transfer** — moves an amount between two accounts, with idempotency protection against duplicates
 
-Money is represented as integer pence; balances are derived by summing an account's transaction history,
-so a transfer is never an in-place edit but an append of mirrored debit/credit legs (double-entry).
-
----
-
-## The three phases
-
-### Phase 1 — Fine-grained mutexes (`ledger_mutex.go`)
-
-Each `Account` embeds a `sync.Mutex`; a separate ledger mutex guards the shared maps. To avoid deadlock
-when a transfer locks two accounts, locks are always taken in a fixed (alphabetical) order, so two
-opposing transfers can never each hold what the other wants.
-
-### Phase 2 — Single actor (`ledger_actor.go`)
-
-One background goroutine owns all state. Callers send a `LedgerCommand` down a channel and block on a
-per-request reply channel. Because only one goroutine ever touches the state, the mutation functions need
-no locks at all.
-
-The tradeoff this exposes: every operation queues behind every other, even transfers touching completely
-unrelated accounts. Lock contention is gone, but throughput is capped at one core.
-
-### Phase 3 — Sharded actors (`ledger_actor.go`, routed in `server.go`)
-
-Phase 3 lifts the single-actor ceiling. Accounts are partitioned across N independent ledgers by
-`fnv(account) % N`, each with its own actor goroutine. Every account lives in exactly one shard — there
-is no replication — so each actor still owns its state outright and runs lock-free.
-
-This splits transfers into two cases:
-
-- **Intra-shard** (source and target hash to the same shard): one actor owns both accounts, so it runs
-  the whole transfer in a single command — the fast path.
-- **Cross-shard** (different shards): no single actor can see both accounts, so the gRPC handler acts as a
-  coordinator and runs a two-phase sequence:
-  `RESERVE` (debit + hold on the source shard) → `CREDIT` (add on the target shard) →
-  `FINALIZE` (mark the held transfer complete). If the credit fails, `REFUND` posts a compensating entry
-  on the source shard so no money is lost.
-
-The coordinator lives in the caller, never inside an actor — an actor must never block its own loop
-waiting on another actor, or two cross-shard transfers could deadlock each other. The caller is allowed
-to block, so the coordination cycle is safe there.
+Money is integer pence; balances are derived by summing an account's transaction history, so a transfer
+is never an in-place edit but an append of mirrored debit/credit legs (double-entry).
 
 ---
 
-## Architecture
+## The three concurrency phases
 
-```
-gRPC client
-    │  proto request (HTTP/2)
-    ▼
-gRPC server (server.go)
-    │  hash(source), hash(target) -> pick shard(s)
-    │  same shard  -> one TRANSFER command
-    │  diff shards -> RESERVE -> CREDIT -> FINALIZE (REFUND on failure)
-    ▼
-N buffered channels (one queue per shard)
-    ▼
-N actor loops (one goroutine per shard)
-    │  each drains its own queue, mutates only its own ledger, lock-free
-    ▼
-N in-memory ledgers (disjoint partitions of the accounts)
-```
+### Phase 1 — Fine-grained mutexes
+Each account has its own lock; a transfer takes both locks in a fixed (alphabetical) order so two
+opposing transfers can never deadlock each other.
+
+### Phase 2 — Single actor
+One goroutine owns all state; callers send a command down a channel and block on a reply channel. No locks
+are needed because only one goroutine ever touches the state. The cost: every operation queues behind
+every other, so throughput is capped at one core.
+
+### Phase 3 — Sharded actors
+Accounts are partitioned across N independent ledgers by `fnv(account) % N`, each with its own actor
+goroutine. Every account lives in exactly one shard (no replication), so each actor still owns its state
+outright and runs lock-free. Transfers split into two cases:
+
+- **Intra-shard** — one actor owns both accounts; the whole transfer runs as a single command (fast path).
+- **Cross-shard** — no single actor sees both accounts, so the caller coordinates a two-phase sequence:
+  `RESERVE` (debit + hold on the source shard) → `CREDIT` (add on the target shard) → `FINALIZE`.
+  If the credit fails, `REFUND` posts a compensating entry on the source shard so no money is lost. The
+  coordinator lives in the caller, never inside an actor — an actor must never block waiting on another
+  actor, or two cross-shard transfers could deadlock.
+
+The system mint lives in exactly one shard (by hash of its name); genesis funding therefore routes
+cross-shard like any other transfer, using the same reserve/credit/finalize path.
+
+---
+
+## Durability — the Write-Ahead Log
+
+Phase 3 made the ledger fast and parallel but still lost everything on restart. The WAL fixes that.
+
+- Each committed operation (a transfer or an account initialisation) is appended to a single global log
+  file as one newline-delimited JSON record, and **fsync'd to disk** before the response is returned.
+- On startup, the server **replays** the log top-to-bottom through the same routing logic the live path
+  uses, rebuilding every account and balance before it accepts any traffic.
+- Replay applies operations *below* the logging layer, so re-running the log never re-logs — the file
+  doesn't grow on every restart.
+- A corrupt or truncated final record (the expected shape after a crash mid-write) is detected on replay,
+  and the server refuses to start with incomplete state rather than serving wrong balances.
+
+**Verified:** initialise accounts, run transfers, `kill` the process, restart — the accounts and balances
+come back exactly as they were, rebuilt entirely from the log.
+
+This is a **log-after-commit** WAL: an operation is applied and then logged. A true write-ahead log logs
+the *intent* first and records the outcome separately; the simplification here is noted under Limitations.
 
 ---
 
 ## Benchmarks
 
-Measured on an **AMD Ryzen 7 8845HS** (Zen 4), 8 shards, swept across 1, 4, and 8 cores.
-`ns/op` is per transfer (lower is faster).
+Measured on an **AMD Ryzen 7 8845HS** (8 cores / 16 threads, Zen 4), using all 16 threads,
+median of 5 runs. `ns/op` per transfer, lower is faster.
 
-**Low contention** — random transfers across a wide pool of accounts:
+| Strategy      | Low contention | High contention |
+|---------------|----------------|-----------------|
+| Mutex         | ~1450          | ~1880           |
+| Single actor  | ~2225          | ~1930           |
+| Sharded (8)   | **~1090**      | ~1140           |
 
-| Strategy      | 1 core | 4 cores | 8 cores | B/op | allocs/op |
-|---------------|--------|---------|---------|------|-----------|
-| Mutex         | 4326   | 2442    | 1978    | 840  | 8         |
-| Single actor  | 3107   | 2506    | 2153    | 942  | 9         |
-| Sharded (8)   | 3740   | 2362    | **1632**| 1388 | 17        |
-
-**High contention** — every transfer targets one hot account ("The Mint"):
-
-| Strategy      | 1 core | 4 cores | 8 cores | B/op | allocs/op |
-|---------------|--------|---------|---------|------|-----------|
-| Mutex         | 1846   | 1883    | 1866    | 885  | 6         |
-| Single actor  | 2471   | 2223    | 2056    | 957  | 7         |
-| Sharded (8)   | 3465   | 2311    | 1744    | 1433 | 15        |
-
-What the numbers show:
-
-- **Sharding wins when load spreads.** At 8 cores under low contention it's the fastest strategy
-  (1632 ns/op), because work fans out across 8 actors on 8 cores.
-- **The single actor barely scales with cores** (3107 → 2153, ~1.4×) — it can't, since everything
-  serialises through one goroutine. Mutex and sharded both scale ~2.3×. That gap *is* the bottleneck
-  Phase 3 was built to remove.
-- **A hot key erases sharding's edge.** When every transfer targets one account, all credits funnel into
-  that account's single shard, recreating a single-actor bottleneck — and sharding pays a cross-shard tax
-  on top (note the higher allocs/op). Sharding helps in proportion to how well traffic distributes.
+- **Sharding is fastest under both workloads** — ~1090 ns/op, roughly 2× faster than the single
+  actor and ~25% faster than fine-grained mutexes, because work fans out across 8 actor goroutines
+  instead of serialising through one.
+- **The single actor is slowest under low contention** — every operation queues behind every other
+  through a single goroutine, so additional cores can't speed up the core work.
+- **Sharding holds up under a hot key** — when every transfer targets one account ("The Mint"),
+  sharded throughput barely changes (~1090 → ~1140). Credits funnel into the mint's single shard, but
+  reserves still parallelise across shards, so the cross-shard coordination cost stays modest at this
+  scale. (A more extreme hot-key workload would eventually expose the single-shard ceiling on the hot
+  account.)
 
 ---
 
 ## Correctness
 
-The core invariant is conservation of money (zero-sum). A test fires thousands of concurrent randomized
-transfers across many accounts and asserts the total is unchanged afterward, run under `go test -race` to
-catch data races as well as lost updates:
+Zero-sum conservation under concurrency, checked with the race detector:
 
 ```bash
 go test -race -count=20 ./internal/domain/
 ```
 
+The WAL has its own tests: round-trip (append → replay → fields/order intact), persistence across separate
+WAL instances on the same file (proving on-disk durability), and corrupt-line detection.
+
 ---
 
 ## Known limitations
 
-- **No persistence** — all state is lost on restart. The RESERVE→CREDIT→FINALIZE record is the natural
-  thing a write-ahead log would persist; that's the intended next step.
-- **Hot-key bottleneck** — a single very popular account serialises all of its credits through one shard,
-  regardless of shard count (see benchmarks).
-- **Cross-shard cost** — a cross-shard transfer is ~3 messages instead of 1, roughly doubling allocations
-  per op; it is also briefly non-atomic (money is debited from the source before it lands on the target,
-  protected by the pending idempotency state during that window).
-- **`context.Context` is ignored** in handlers — client disconnects can't cancel in-flight work.
+- **No log compaction.** The WAL grows unboundedly; a production system would periodically snapshot state
+  and truncate the log.
+- **Log-after-commit.** A crash in the narrow window between applying an operation and appending its log
+  record would lose that operation. A true write-ahead log records intent first.
+- **Single global log fsync.** All shards serialise through one log file's fsync; a high-throughput design
+  would shard the log (and reconcile ordering on replay) or batch fsyncs via group commit.
+- **Hot-key bottleneck.** A single very popular account serialises its credits through one shard,
+  regardless of shard count.
+- **`context.Context` ignored** in handlers — client disconnects can't cancel in-flight work.
 
 ---
 
@@ -150,6 +133,8 @@ go mod tidy
 go build -o bankserver main.go
 ./bankserver
 ```
+
+State is persisted to `ledger.wal` and replayed automatically on the next start.
 
 Test via a browser UI:
 
@@ -163,13 +148,14 @@ grpcui -plaintext -proto api/proto/ledgerapi/ledger.proto 127.0.0.1:8080
 ## Project layout
 
 ```
-├── main.go                          # Wires up N queues + N shard ledgers + N actor loops, runs gRPC server
+├── main.go                          # Wires N queues + N shard ledgers + actor loops, opens WAL, runs server
 ├── internal/
 │   ├── domain/
-│   │   ├── models.go                # Structs: Account, Ledger, commands, requests/responses
-│   │   ├── ledger_mutex.go          # Phase 1: mutex-based Transfer / InitialiseAccount
-│   │   └── ledger_actor.go          # Phase 2 & 3: pure mutations, reserve/credit/refund/finalize handlers
+│   │   ├── models.go                # Account, Ledger, commands, WAL entry types
+│   │   ├── ledger_mutex.go          # Phase 1: mutex-based transfer / init
+│   │   ├── ledger_actor.go          # Phase 2 & 3: pure mutations, reserve/credit/refund/finalize
+│   │   └── wal.go                   # WAL interface + FileWAL (append + fsync, replay)
 │   └── ports/grpc/
-│       └── server.go                # gRPC adapter + cross-shard coordinator (routeTransfer)
+│       └── server.go                # gRPC adapter, cross-shard coordinator, WAL logging + recovery
 └── api/proto/ledgerapi/             # Proto definitions and generated stubs
 ```

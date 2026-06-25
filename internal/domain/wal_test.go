@@ -15,10 +15,10 @@ func TestRoundTrip(t *testing.T) {
 
 	// Add transfer entry...
 	transfer := &WALTransfer{
-		Source:            "alice",
-		Target:            "bob",
-		Amount:            1,
-		IdempotencyRecord: "testing123",
+		Source:         "alice",
+		Target:         "bob",
+		Amount:         1,
+		IdempotencyKey: "testing123",
 	}
 	err = wal.Append(&WALEntry{
 		CommandType:           TransferCommand,
@@ -65,7 +65,7 @@ func TestRoundTrip(t *testing.T) {
 	if entries[0].TransferInfo.Source != "alice" ||
 		entries[0].TransferInfo.Target != "bob" ||
 		entries[0].TransferInfo.Amount != 1 ||
-		entries[0].TransferInfo.IdempotencyRecord != "testing123" {
+		entries[0].TransferInfo.IdempotencyKey != "testing123" {
 		t.Fatalf("entry 0 transfer info fields wrong: %+v", entries[0].TransferInfo)
 	}
 
@@ -92,10 +92,10 @@ func TestPersistAcrossInstances(t *testing.T) {
 
 	// Add transfer entry...
 	transfer := &WALTransfer{
-		Source:            "alice",
-		Target:            "bob",
-		Amount:            1,
-		IdempotencyRecord: "testing123",
+		Source:         "alice",
+		Target:         "bob",
+		Amount:         1,
+		IdempotencyKey: "testing123",
 	}
 	err = wal.Append(&WALEntry{
 		CommandType:           TransferCommand,
@@ -147,7 +147,7 @@ func TestPersistAcrossInstances(t *testing.T) {
 	if entries[0].TransferInfo.Source != "alice" ||
 		entries[0].TransferInfo.Target != "bob" ||
 		entries[0].TransferInfo.Amount != 1 ||
-		entries[0].TransferInfo.IdempotencyRecord != "testing123" {
+		entries[0].TransferInfo.IdempotencyKey != "testing123" {
 		t.Fatalf("entry 0 transfer info fields wrong: %+v", entries[0].TransferInfo)
 	}
 
@@ -175,10 +175,10 @@ func TestReplayCorruptLine(t *testing.T) {
 	err = wal.Append(&WALEntry{
 		CommandType: TransferCommand,
 		TransferInfo: &WALTransfer{
-			Source:            "alice",
-			Target:            "bob",
-			Amount:            1,
-			IdempotencyRecord: "q1",
+			Source:         "alice",
+			Target:         "bob",
+			Amount:         1,
+			IdempotencyKey: "q1",
 		},
 	})
 	if err != nil {

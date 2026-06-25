@@ -6,7 +6,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"hash/fnv"
 )
 
 // BenchmarkConcurrentTransfers Low Contention simulates a healthy banking ecosystem
@@ -58,11 +57,10 @@ func BenchmarkConcurrentTransfers_LowContention(b *testing.B) {
 // or into the EXACT same popular account ("The Mint").
 func BenchmarkConcurrentTransfers_HighContention(b *testing.B) {
 	ledger := InitialiseLedger()
-
+	fundedAccount(ledger, "The Mint", 999_999_999_999)
 	accountCount := 1000
 	for i := range accountCount {
-		username := fmt.Sprintf("user_%d", i)
-		_ = ledger.InitialiseAccount(username, 100000)
+		_ = ledger.InitialiseAccount(fmt.Sprintf("user_%d", i), 100000)
 	}
 
 	var txCounter uint64
@@ -93,17 +91,18 @@ func BenchmarkActorTransfers_LowContention(b *testing.B) {
 	queue := make(chan LedgerCommand, 10000) // large buffer to prevent stalling...
 	
 	var wg sync.WaitGroup
-
-	// Start the single background worker thread...
-	ledger.StartActorLoop(queue, &wg)
-	
+	fundedAccount(ledger, "The Mint", 999_999_999_999)
+		
 	// Generate 2,000 unique accounts...
 	accountCount := 2000
 	for i := range accountCount {
 		username := fmt.Sprintf("user_%d", i)
-		_ = ledger.executePureInitialise(username, 100000)
+		fundedAccount(ledger, username, 100000)
 	}
 
+	// Start the single background worker thread...
+	ledger.StartActorLoop(queue, &wg)
+	
 	var txCounter uint64
 	b.ResetTimer()
 
@@ -151,15 +150,18 @@ func BenchmarkActorTransfers_LowContention(b *testing.B) {
 func BenchmarkActorTransfers_HighContention(b *testing.B) {
 	ledger := InitialiseLedger()
 	queue := make(chan LedgerCommand, 10000)
+
+
 	var wg sync.WaitGroup
-
-	ledger.StartActorLoop(queue, &wg)
-
+	fundedAccount(ledger, "The Mint", 999_999_999_999)
 	accountCount := 1000
 	for i := 0; i < accountCount; i++ {
 		username := fmt.Sprintf("user_%d", i)
-		_ = ledger.executePureInitialise(username, 100000)
+		fundedAccount(ledger, username, 100000)
 	}
+
+
+	ledger.StartActorLoop(queue, &wg)
 
 	var txCounter uint64
 	b.ResetTimer()
@@ -195,13 +197,6 @@ func BenchmarkActorTransfers_HighContention(b *testing.B) {
 }
 
 
-func getActorIndex(key string, NoOfActors int) int {
-	hasher := fnv.New32a()
-	hasher.Write([]byte(key))
-
-	return int(hasher.Sum32()) % NoOfActors
-} 
-
 func BenchmarkShardedTransfers_LowContention(b *testing.B) {
 	const shards, accounts = 8, 2000
 
@@ -209,18 +204,24 @@ func BenchmarkShardedTransfers_LowContention(b *testing.B) {
 	ledgers := make([]*Ledger, shards)
 	queues := make([]chan LedgerCommand, shards)
 	var wg sync.WaitGroup
+
+	shardOf := func(name string) int { return GetIndex(name, shards) }
+	
 	for i := range shards {
 		ledgers[i] = InitialiseLedger()
 		queues[i] = make(chan LedgerCommand, 10000)
-		ledgers[i].StartActorLoop(queues[i], &wg)
 	}
-
-	shardOf := func(name string) int { return getActorIndex(name, shards) }
-
-	// Seed: create each account on its own shard and fund it locally.
+	
+	fundedAccount(ledgers[shardOf("The Mint")], "The Mint", 999_999_999_999)	
 	for i := range accounts {
 		u := fmt.Sprintf("user_%d", i)
-		_ = ledgers[shardOf(u)].executePureInitialise(u, 100000)
+		fundedAccount(ledgers[shardOf(u)], u, 100000)
+	}
+
+	// Start actor loops...
+	for i := range shards {
+		ledgers[i].StartActorLoop(queues[i], &wg)
+		
 	}
 
 	var ctr uint64
@@ -287,11 +288,11 @@ func BenchmarkShardedTransfers_HighContention(b *testing.B) {
 		ledgers[i].StartActorLoop(queues[i], &wg)
 	}
 
-	shardOf := func(name string) int { return getActorIndex(name, shards) }
+	shardOf := func(name string) int { return GetIndex(name, shards) }
 
 	for i := range accounts {
 		u := fmt.Sprintf("user_%d", i)
-		_ = ledgers[shardOf(u)].executePureInitialise(u, 100000)
+		fundedAccount(ledgers[shardOf(u)], u, 100000)
 	}
 
 	var ctr uint64

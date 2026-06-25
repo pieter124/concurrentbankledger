@@ -97,14 +97,10 @@ func (ledger *Ledger) executePureTransfer(source string, target string, amount i
 }
 
 // executePureInitialise creates an account sequentially inside the background worker thread... No locks required!
-func (ledger *Ledger) executePureInitialise(username string, startingBalance int64) error {
+func (ledger *Ledger) executePureInitialise(username string) error {
 	// Sanity check map existence safely without a lock.
 	if _, exists := ledger.Account[username]; exists {
 		return fmt.Errorf("account already exists with username %s", username)
-	}
-
-	if startingBalance == 0 {
-		return fmt.Errorf("balance > 0 is required")
 	}
 
 	// Build entity struct...
@@ -115,15 +111,6 @@ func (ledger *Ledger) executePureInitialise(username string, startingBalance int
 
 	// Insert directly into the map without ledger.Lock()
 	ledger.Account[username] = &newAccount
-
-	// Generate a unique idempotency key for this account's genesis transaction...
-	genesisKey := "genesis-funding-" + username
-
-	// Call lock-free transfer directly...
-	_, err := ledger.executePureTransfer("The Mint", username, startingBalance, genesisKey)
-	if err != nil {
-		return fmt.Errorf("could not initialise account")
-	}
 	return nil
 }
 
@@ -235,7 +222,7 @@ func (ledger *Ledger) StartActorLoop(queue chan LedgerCommand, wg *sync.WaitGrou
 			case InitialiseAccountCommand:
 				req := cmd.InitAccount
 				// Run the pure sequential initialisation safely on 1 core
-				err := ledger.executePureInitialise(req.Username, req.StartingBalance)
+				err := ledger.executePureInitialise(req.Username)
 				// Mail the single error object back to the waiting caller
 				req.ReplyTo <- err
 

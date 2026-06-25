@@ -10,6 +10,7 @@ import (
 func TestConcurrentLedgerInvariance(t *testing.T) {
 	// Initialise ledger and create accounts...
 	ledger := InitialiseLedger()
+	ledger.SeedMint() 
 	_ = ledger.InitialiseAccount("alice", 10_000)
 	_ = ledger.InitialiseAccount("bob", 10_000)
 
@@ -64,6 +65,7 @@ func TestConcurrentLedgerInvariance(t *testing.T) {
 func TestTransferInsufficientFunds(t *testing.T) {
 	// Initialise ledger and accounts...
 	ledger := InitialiseLedger()
+	ledger.SeedMint() 
 	_ = ledger.InitialiseAccount("alice", 1000)
 	_ = ledger.InitialiseAccount("bob", 500)
 
@@ -84,6 +86,7 @@ func TestTransferInsufficientFunds(t *testing.T) {
 func TestTransferToNonExistentAccount(t *testing.T) {
 	// Initialise ledger and account.
 	ledger := InitialiseLedger()
+	ledger.SeedMint() 
 	_ = ledger.InitialiseAccount("alice", 1000)
 
 	// Attempt transfer to non-existent account.
@@ -99,6 +102,7 @@ func TestTransferToNonExistentAccount(t *testing.T) {
 
 func TestTransferInvalidAmount(t *testing.T) {
 	ledger := InitialiseLedger()
+	ledger.SeedMint() 
 	_ = ledger.InitialiseAccount("alice", 1000)
 	_ = ledger.InitialiseAccount("bob", 1000)
 
@@ -116,6 +120,7 @@ func TestTransferInvalidAmount(t *testing.T) {
 
 func TestTransferIdempotencyAndHijackProtection(t *testing.T) {
 	ledger := InitialiseLedger()
+	ledger.SeedMint() 	
 	_ = ledger.InitialiseAccount("alice", 1000)
 	_ = ledger.InitialiseAccount("bob", 500)
 

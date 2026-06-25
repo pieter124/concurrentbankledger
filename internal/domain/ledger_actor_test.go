@@ -2,9 +2,18 @@ package domain
 
 import "testing"
 
+// fundedAccount creates an account in the ledger and gives it a starting balance
+func fundedAccount(ledger *Ledger, username string, balance int64) {
+	_ = ledger.executePureInitialise(username) // create empty
+	ledger.Account[username].History = append(
+		ledger.Account[username].History,
+		LocalAccountTransaction{TransactionID: "seed-" + username, Amount: balance},
+	)
+}
+
 func TestReserveHoldsFunds(t *testing.T) {
 	ledger := InitialiseLedger()
-	_ = ledger.executePureInitialise("alice", 1000)
+	fundedAccount(ledger, "alice", 1000)
 
 	before := ledger.Account["alice"].GetBalance()
 	res := ledger.executeReserve("alice", "bob", 300, "tx_reserve_test")
@@ -13,7 +22,7 @@ func TestReserveHoldsFunds(t *testing.T) {
 		t.Fatalf("expected a fresh reservation, got %+v", res)
 	}
 	after := ledger.Account["alice"].GetBalance()
-	if before-after != 300 {
+	if before - after != 300 {
 		t.Fatalf("expected source to drop by 300, dropped by %d", before-after)
 	}
 	if res.TxnID == "" {
@@ -24,7 +33,7 @@ func TestReserveHoldsFunds(t *testing.T) {
 // Credit adds money to the target and is the only place target-existence is checked.
 func TestCreditLandsFunds(t *testing.T) {
 	ledger := InitialiseLedger()
-	_ = ledger.executePureInitialise("bob", 500)
+	fundedAccount(ledger, "bob", 500)
 
 	ok, err := ledger.executeCredit("bob", 300, "txn-123")
 	if !ok || err != nil {
@@ -47,8 +56,8 @@ func TestCreditRejectsMissingTarget(t *testing.T) {
 func TestReserveCreditFinalizeFlow(t *testing.T) {
 	src := InitialiseLedger()
 	dst := InitialiseLedger()
-	_ = src.executePureInitialise("alice", 1000)
-	_ = dst.executePureInitialise("bob", 500)
+	fundedAccount(src, "alice", 1000)
+	fundedAccount(dst, "bob", 500)
 
 	res := src.executeReserve("alice", "bob", 300, "tx_flow")
 	if !res.Proceed || res.Err != nil {
@@ -76,7 +85,7 @@ func TestReserveCreditFinalizeFlow(t *testing.T) {
 // Refund must make the source whole when credit can't land, so no money vanishes.
 func TestRefundRestoresFunds(t *testing.T) {
 	src := InitialiseLedger()
-	_ = src.executePureInitialise("alice", 1000)
+	fundedAccount(src, "alice", 1000)
 
 	res := src.executeReserve("alice", "ghost", 300, "tx_refund")
 	if !res.Proceed {
@@ -101,7 +110,7 @@ func TestRefundRestoresFunds(t *testing.T) {
 // Reserve's three reply signals.
 func TestReserveReplySignals(t *testing.T) {
 	ledger := InitialiseLedger()
-	_ = ledger.executePureInitialise("alice", 1000)
+	fundedAccount(ledger, "alice", 1000)
 
 	// Fresh: Proceed.
 	if res := ledger.executeReserve("alice", "bob", 100, "k1"); !res.Proceed {

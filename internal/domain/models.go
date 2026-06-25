@@ -3,7 +3,10 @@ package domain
 import (
 	"sync"
 	"time"
+	"hash/fnv"
 )
+
+
 
 // An enum to help define the different types of states for our idempotency check.
 const (
@@ -140,19 +143,33 @@ func (account *Account) GetBalance() int64 {
 }
 
 // InitialiseLedger - Initializing a ledger, creating a "system mint", which essentially has infinite monies.
-func InitialiseLedger() (ledger *Ledger) {
-	ledger = &Ledger{
+func InitialiseLedger() (*Ledger) {
+	ledger := &Ledger{
 		Account:               make(map[string]*Account),
 		LedgerHistory:         make([]Transaction, 0, 100),
 		AttemptedTransactions: make(map[string]*IdempotencyRecord),
 	}
-	ledger.Account["The Mint"] = &Account{
+	return ledger
+}
+
+// SeedMint inserts the single system mint account into THIS ledger (shard).
+func (ledger *Ledger) SeedMint() {
+	mint := &Account{
 		Username: "The Mint",
 		History:  make([]LocalAccountTransaction, 0, 10),
 	}
-	ledger.Account["The Mint"].History = append(ledger.Account["The Mint"].History, LocalAccountTransaction{
+	// Seed it with effectively unlimited funds via a genesis entry.
+	mint.History = append(mint.History, LocalAccountTransaction{
 		TransactionID: "THEMINT",
 		Amount:        999_999_999_999,
 	})
-	return
+	ledger.Account["The Mint"] = mint
+}
+
+// GetIndex - gets which index of our actor loops...
+func GetIndex(key string, NoOfActors int) int {
+	hasher := fnv.New32a()
+	hasher.Write([]byte(key))
+
+	return int(hasher.Sum32()) % NoOfActors
 }
