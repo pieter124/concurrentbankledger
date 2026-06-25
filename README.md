@@ -114,15 +114,9 @@ WAL instances on the same file (proving on-disk durability), and corrupt-line de
 
 ## Known limitations
 
-- **No log compaction.** The WAL grows unboundedly; a production system would periodically snapshot state
-  and truncate the log.
-- **Log-after-commit.** A crash in the narrow window between applying an operation and appending its log
-  record would lose that operation. A true write-ahead log records intent first.
-- **Single global log fsync.** All shards serialise through one log file's fsync; a high-throughput design
-  would shard the log (and reconcile ordering on replay) or batch fsyncs via group commit.
-- **Hot-key bottleneck.** A single very popular account serialises its credits through one shard,
-  regardless of shard count.
-- **`context.Context` ignored** in handlers — client disconnects can't cancel in-flight work.
+- **No log compaction.** The WAL grows unboundedly; a production system would periodically snapshot state and truncate the log.
+- **Single global log fsync.** All shards serialise through one log file's fsync; a high-throughput design would shard the log (and reconcile ordering on replay) or batch fsyncs via group commit.
+- **Hot-key bottleneck.** A single very popular account serialises its credits through one shard, regardless of shard count.
 
 ---
 
@@ -159,3 +153,20 @@ grpcui -plaintext -proto api/proto/ledgerapi/ledger.proto 127.0.0.1:8080
 │       └── server.go                # gRPC adapter, cross-shard coordinator, WAL logging + recovery
 └── api/proto/ledgerapi/             # Proto definitions and generated stubs
 ```
+
+## What I learnt
+This started as a comparison of concurrency strategies, which grew into a small distributed systems project.
+
+**Concurrency is a trade-off between contention and parallelism**. Fine-grained mutexes parallelise well with a cost of lock contention, a single actor eliminates contention by giving one thread (goroutine in this case) sole ownership of all state, but caps throughput at one core. Sharded actors improve the parallelism whilst eliminating lock contention by partitioning state, with the cost of increased complexity (as per the two-phase protocol for cross-shard operations).
+
+**Cross-shard atomicity requires a commit protocol**. When a transfer's two accounts live on different shards, no single actor can access both, and so the operation cannot be atomic in one step. I built a reserve-credit-finalize protocol (with a correctly compensated refund on failure) so that money is never lost or duplicated even if the transfer fails halfway through the request. It first reserves the money which the source account is going to transfer. If that is successful, it then sends the money to the transfer account. If the second operation fails, we refund the source account with the money, else we do a finalize operation to mark the transfer as complete.
+
+**Durability is about ordering and fsync, not just writing to a file**. A WAL only protects you if the write record reaches the physical disk. Write alone leaves the data in an OS buffer that a crash can wipe, so fsync guarantees durability of that operation. I made the WAL simple, making it a log-after-commit WAL, rather than the traditional WAL which records intent aswell.
+
+**Tests and benchmarks are how to trust code (particularly concurrent code!)**. Tests including zero-sum invariance ran under Go's race detector caught problems that ordinary tests would miss, the benchmarks confirmed performance differences I expected, and also flagged a result that was too fast to be real, which turned out to be transfers getting silently rejected, rather than executed.
+
+## What I would do differently moving forward
+
+- **True write-ahead ordering**. Log the intent first, so a crash in the window between applying and logging cannot lose an operation.
+- **Log compaction**. Snapshot the state periodically and truncating the log so that it doesn't grow forever and replays stay quick on startup. We can also batch fsync operations to amortise the per-write disk cost and improve write latency.
+- **Handle context.Context in handlers**. So that a client's disconnect can cancel the in-flight request.
